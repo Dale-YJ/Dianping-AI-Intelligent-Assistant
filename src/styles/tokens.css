@@ -1,0 +1,304 @@
+/* ═══════════════════════════════════════════
+   DESIGN SYSTEM TOKENS
+   Direction: Warm Editorial — 美食杂志 × 聊天应用
+   ═══════════════════════════════════════════ */
+:root {
+  /* ── Color Palette ── */
+  --ink:        #1A1A2E;
+  --ink-light:  #4A4A5E;
+  --ink-muted:  #8E8E9E;
+  --warm-bg:    #FFFAF5;
+  --card-bg:    #FFFFFF;
+  --card-warm:  #FFF8F0;
+  --amber:      #F0A500;
+  --coral:      #FF6B35;
+  --coral-deep: #E55A2B;
+  --coral-pale: #FFF0E8;
+  --emerald:    #2D8B4E;
+  --emerald-pale:#EDF7F0;
+  --slate:      #64748B;
+  --border:     #F0EBE5;
+  --border-strong: #E5DFD8;
+  --shadow-sm:  0 1px 3px rgba(26, 26, 46, 0.06);
+  --shadow-md:  0 4px 16px rgba(26, 26, 46, 0.08);
+  --shadow-lg:  0 8px 32px rgba(26, 26, 46, 0.10);
+  --shadow-xl:  0 16px 48px rgba(26, 26, 46, 0.14);
+
+  /* ── Sentiment Colors ── */
+  --sentiment-positive:      #10B981;
+  --sentiment-positive-bg:   #ECFDF5;
+  --sentiment-neutral:       #F59E0B;
+  --sentiment-neutral-bg:    #FFFBEB;
+  --sentiment-negative:      #EF4444;
+  --sentiment-negative-bg:   #FEF2F2;
+
+  /* ── Typography ── */
+  --font-display: 'Georgia', 'Noto Serif SC', 'STSong', serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, 'PingFang SC',
+                  'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-mono:    'SF Mono', 'Cascadia Code', monospace;
+  --text-xs:  0.75rem;
+  --text-sm:  0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md:  1.0625rem;
+  --text-lg:  1.25rem;
+  --text-xl:  1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 2.5rem;
+  --leading-tight:  1.2;
+  --leading-normal: 1.6;
+  --leading-relaxed:1.75;
+
+  /* ── Spacing Rhythm (4px base) ── */
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-3:  0.75rem;
+  --space-4:  1rem;
+  --space-5:  1.25rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* ── Borders & Surfaces ── */
+  --radius-sm:   0.5rem;
+  --radius-md:   0.75rem;
+  --radius-lg:   1rem;
+  --radius-xl:   1.25rem;
+  --radius-full: 9999px;
+
+  /* ── Layout ── */
+  --nav-height:  3.5rem;
+  --tab-height:  4rem;
+  --max-width:   480px;
+
+  /* ── Chat Specific ── */
+  --bubble-user-bg: var(--coral-pale);
+  --bubble-ai-bg:   #FFFBF5;
+  --bubble-radius:  1.25rem;
+
+  /* ── Motion Tokens ── */
+  --ease-out:     cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out:  cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring:  cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast:   150ms;
+  --duration-normal: 300ms;
+  --duration-slow:   500ms;
+  --duration-page:   400ms;
+}
+
+/* ═══════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+  background: var(--warm-bg);
+  overflow-x: hidden;
+}
+
+img { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+ul, ol { list-style: none; }
+
+/* ═══════════════════════════════════════════
+   APP SHELL
+   ═══════════════════════════════════════════ */
+.app-shell {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  min-height: 100dvh;
+  background: var(--card-bg);
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+
+/* ── Page Transition ── */
+.page-enter-active { animation: pageEnter var(--duration-page) var(--ease-out); }
+.page-leave-active  { animation: pageLeave var(--duration-fast) var(--ease-in-out); }
+
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pageLeave {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* ═══════════════════════════════════════════
+   MOTION: Staggered Entrance
+   ═══════════════════════════════════════════ */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.stagger-1  { animation: fadeUp 0.5s var(--ease-out) 0.05s both; }
+.stagger-2  { animation: fadeUp 0.5s var(--ease-out) 0.10s both; }
+.stagger-3  { animation: fadeUp 0.5s var(--ease-out) 0.15s both; }
+.stagger-4  { animation: fadeUp 0.5s var(--ease-out) 0.20s both; }
+.stagger-5  { animation: fadeUp 0.5s var(--ease-out) 0.25s both; }
+.stagger-6  { animation: fadeUp 0.5s var(--ease-out) 0.30s both; }
+.stagger-7  { animation: fadeUp 0.5s var(--ease-out) 0.35s both; }
+.stagger-8  { animation: fadeUp 0.5s var(--ease-out) 0.40s both; }
+.stagger-9  { animation: fadeUp 0.5s var(--ease-out) 0.45s both; }
+.stagger-10 { animation: fadeUp 0.5s var(--ease-out) 0.50s both; }
+
+.reveal-scale { animation: scaleIn 0.4s var(--ease-spring) both; }
+.slide-in-right { animation: slideInRight 0.4s var(--ease-out) both; }
+.slide-in-up { animation: slideInUp 0.35s var(--ease-out) both; }
+
+/* ── Pulse on the search bar ── */
+@keyframes gentlePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,53,0.15); }
+  50%      { box-shadow: 0 0 0 6px rgba(255,107,53,0); }
+}
+
+/* ── Banner auto-scroll indicator ── */
+@keyframes bannerDot {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.15); }
+}
+
+/* ── Heart beat on favorite ── */
+@keyframes heartBeat {
+  0%   { transform: scale(1); }
+  25%  { transform: scale(1.3); }
+  50%  { transform: scale(1); }
+  75%  { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+.heart-beat { animation: heartBeat 0.6s var(--ease-out); }
+
+/* ── Skeleton loading shimmer ── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--border) 25%, var(--warm-bg) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+.skeleton-text { height: 14px; margin-bottom: var(--space-2); }
+.skeleton-text-short { height: 14px; width: 60%; margin-bottom: var(--space-2); }
+.skeleton-avatar { width: 64px; height: 64px; border-radius: var(--radius-lg); }
+.skeleton-card { height: 80px; border-radius: var(--radius-md); margin-bottom: var(--space-3); }
+
+/* ── Full-page loading spinner ── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-spinner {
+  width: 40px; height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--coral);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto var(--space-4);
+}
+
+/* ── Error state ── */
+.error-state { text-align: center; padding: var(--space-16) var(--space-4); }
+.error-state .error-icon { font-size: 3rem; margin-bottom: var(--space-4); }
+.error-state h3 { font-size: var(--text-lg); font-weight: 700; margin-bottom: var(--space-2); }
+.error-state p { color: var(--ink-muted); font-size: var(--text-sm); margin-bottom: var(--space-4); }
+.error-retry {
+  display: inline-block;
+  padding: var(--space-2) var(--space-6);
+  background: var(--coral);
+  color: #fff;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+/* ── Empty state ── */
+.empty-state { text-align: center; padding: var(--space-12) var(--space-4); }
+.empty-state .empty-icon { font-size: 2.5rem; margin-bottom: var(--space-3); }
+.empty-state h3 { font-size: var(--text-md); font-weight: 700; margin-bottom: var(--space-1); }
+.empty-state p { color: var(--ink-muted); font-size: var(--text-sm); }
+
+/* ── Typing indicator dots ── */
+@keyframes typingDot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-8px); opacity: 1; }
+}
+.typing-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: typingDot 1.4s infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ═══════════════════════════════════════════
+   RESPONSIVE — Mobile First → Tablet → Desktop
+   ═══════════════════════════════════════════ */
+
+/* Tablet: wider card shell, bigger touch targets */
+@media (min-width: 768px) {
+  :root {
+    --max-width: 768px;
+    --text-base: 1rem;
+    --space-4: 1.25rem;
+  }
+}
+
+/* Desktop: full two-column layout for chat, wider content */
+@media (min-width: 1024px) {
+  :root {
+    --max-width: 1200px;
+    --chat-max-width: 100%;
+    --panel-gap: 0;
+    --text-base: 1.0625rem;
+  }
+  .app-shell {
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+/* Large Desktop: center the app with subtle shadow */
+@media (min-width: 1440px) {
+  :root {
+    --max-width: 1320px;
+  }
+  .app-shell {
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+    min-height: calc(100dvh - 2rem);
+  }
+}
