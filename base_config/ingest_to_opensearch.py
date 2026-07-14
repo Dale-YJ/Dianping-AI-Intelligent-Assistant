@@ -82,6 +82,10 @@ def create_indexes(client):
                     }
                 },
             "categories": {"type": "keyword"},
+            "bio_vector": {
+                "type": "knn_vector",
+                "dimension": VECTOR_DIM,
+            },
             "hours": {
                 "properties": {
                     "Monday": {"type": "keyword"},
@@ -104,8 +108,9 @@ def bulk_import(client, file_path, index_name, vector_field, text_field, is_busi
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
 
-    # 加载模型
-    model = SentenceTransformer('../models/all-MiniLM-L6-v2')
+    # 加载模型（路径相对于项目根目录）
+    model_path = os.path.join(BASE_DIR, "models", "all-MiniLM-L6-v2")
+    model = SentenceTransformer(model_path)
 
     total_count = 0
     success_count = 0
