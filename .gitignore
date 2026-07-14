@@ -1,0 +1,8 @@
+.idea
+.venv
+__pycache__
+knowledge_base
+config.py
+models
+.env
+
