@@ -142,7 +142,7 @@ def bulk_import(client, file_path, index_name):
     print(f"\n 导入数据到 {index_name}")
 
     # 加载模型
-    model = SentenceTransformer('../models/all-MiniLM-L6-v2')
+    model = SentenceTransformer(os.path.join(BASE_DIR, 'models', 'all-MiniLM-L6-v2'))
     total_count = 0
     success_count = 0
     error_count = 0
