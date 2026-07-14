@@ -1,4 +1,6 @@
+import numpy as np
 from opensearchpy import OpenSearch, helpers
+from opensearchpy.helpers import bulk
 from sentence_transformers import SentenceTransformer
 import json
 import os
@@ -34,84 +36,113 @@ BATCH_SIZE = 500
 
 
 # ============================================
+#
+# def create_indexes(client):
+#     """创建索引"""
+#     print("\n 创建索引...")
+#
+#     # 删除已存在的索引
+#     for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
+#         if client.indices.exists(index=index_name):
+#             print(f"   删除旧索引: {index_name}")
+#             client.indices.delete(index=index_name)
+#
+#     # 商家索引
+#     business_mapping = {
+#         "settings": {
+#             "index": {
+#                 "knn": True,
+#                 "number_of_shards": 1,
+#                 "number_of_replicas": 0
+#             }
+#         },
+#         "mappings": {
+#             "properties": {
+#                 "business_id": {"type": "keyword"},
+#                 "name": {"type": "text"},
+#                 "address": {"type": "text"},
+#                 "city": {"type": "keyword"},
+#                 "state": {"type": "keyword"},
+#                 "postal_code": {"type": "keyword"},
+#                 "location": {"type": "geo_point"},  # 地理坐标点
+#                 "stars": {"type": "float"},
+#                 "review_count": {"type": "integer"},
+#                 "is_open": {"type": "boolean"},
+#                 "attributes": {
+#                     "properties": {
+#                         "RestaurantsTakeOut": {"type": "boolean"},
+#                         "BusinessParking": {
+#                             "properties": {
+#                                 "garage": {"type": "boolean"},
+#                                 "street": {"type": "boolean"},
+#                                 "validated": {"type": "boolean"},
+#                                 "lot": {"type": "boolean"},
+#                                 "valet": {"type": "boolean"}
+#                             }
+#                         }
+#                     }
+#                 },
+#             "categories": {"type": "keyword"},
+#             "hours": {
+#                 "properties": {
+#                     "Monday": {"type": "keyword"},
+#                     "Tuesday": {"type": "keyword"},
+#                     "Wednesday": {"type": "keyword"},
+#                     "Thursday": {"type": "keyword"},
+#                     "Friday": {"type": "keyword"},
+#                     "Saturday": {"type": "keyword"},
+#                     "Sunday": {"type": "keyword"}
+#                 }
+#             }
+#         }
+#     },
+#     }
+#     client.indices.create(index=BUSINESS_INDEX, body=business_mapping)
+#     print(f"创建索引: {BUSINESS_INDEX}")
+#
+
+def traverse_json(data,prefix="", result=""):
+    """
+    递归遍历JSON数据，将所有字段内容拼接到字符串中
+
+    Args:
+        data: JSON数据（dict, list, str, int, float, bool, None）
+        result_str: 累积的结果字符串
+
+    Returns:
+        str: 拼接后的字符串
+    """
+    if isinstance(data, dict):
+        for key, value in data.items():
+            new_prefix = f"{prefix}.{key}" if prefix else key
+            result = traverse_json(value, new_prefix, result)
+
+    elif isinstance(data, list):
+        for idx, item in enumerate(data):
+            new_prefix = f"{prefix}[{idx}]"
+            result = traverse_json(item, new_prefix, result)
+
+    else:
+        # 基本类型：拼接 key: value
+        result += f"{prefix}: {data}\n"
+
+    return result
+
+def convert_vector_to_list(vector):
+    """
+    将numpy数组转换为Python列表（OpenSearch需要）
+    """
+    if isinstance(vector, np.ndarray):
+        return vector.tolist()
+    return vector
 
 
-def create_indexes(client):
-    """创建索引"""
-    print("\n 创建索引...")
-
-    # 删除已存在的索引
-    for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
-        if client.indices.exists(index=index_name):
-            print(f"   删除旧索引: {index_name}")
-            client.indices.delete(index=index_name)
-
-    # 商家索引
-    business_mapping = {
-        "settings": {
-            "index": {
-                "knn": True,
-                "number_of_shards": 1,
-                "number_of_replicas": 0
-            }
-        },
-        "mappings": {
-            "properties": {
-                "business_id": {"type": "keyword"},
-                "name": {"type": "text"},
-                "address": {"type": "text"},
-                "city": {"type": "keyword"},
-                "state": {"type": "keyword"},
-                "postal_code": {"type": "keyword"},
-                "location": {"type": "geo_point"},  # 地理坐标点
-                "stars": {"type": "float"},
-                "review_count": {"type": "integer"},
-                "is_open": {"type": "boolean"},
-                "attributes": {
-                    "properties": {
-                        "RestaurantsTakeOut": {"type": "boolean"},
-                        "BusinessParking": {
-                            "properties": {
-                                "garage": {"type": "boolean"},
-                                "street": {"type": "boolean"},
-                                "validated": {"type": "boolean"},
-                                "lot": {"type": "boolean"},
-                                "valet": {"type": "boolean"}
-                            }
-                        }
-                    }
-                },
-            "categories": {"type": "keyword"},
-            "bio_vector": {
-                "type": "knn_vector",
-                "dimension": VECTOR_DIM,
-            },
-            "hours": {
-                "properties": {
-                    "Monday": {"type": "keyword"},
-                    "Tuesday": {"type": "keyword"},
-                    "Wednesday": {"type": "keyword"},
-                    "Thursday": {"type": "keyword"},
-                    "Friday": {"type": "keyword"},
-                    "Saturday": {"type": "keyword"},
-                    "Sunday": {"type": "keyword"}
-                }
-            }
-        }
-    },
-    }
-    client.indices.create(index=BUSINESS_INDEX, body=business_mapping)
-    print(f"创建索引: {BUSINESS_INDEX}")
-
-
-def bulk_import(client, file_path, index_name, vector_field, text_field, is_business=False):
+def bulk_import(client, file_path, index_name):
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
 
-    # 加载模型（路径相对于项目根目录）
-    model_path = os.path.join(BASE_DIR, "models", "all-MiniLM-L6-v2")
-    model = SentenceTransformer(model_path)
-
+    # 加载模型
+    model = SentenceTransformer('../models/all-MiniLM-L6-v2')
     total_count = 0
     success_count = 0
     error_count = 0
@@ -121,48 +152,31 @@ def bulk_import(client, file_path, index_name, vector_field, text_field, is_busi
     with open(file_path, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             try:
+                #获取每一行的Json数据
                 doc = json.loads(line.strip())
+                # 创建用于向量化的文本
+                text_for_embedding = traverse_json(doc)
+                # 生成向量嵌入
+                embedding = model.encode(text_for_embedding, convert_to_numpy=True)
+                # 将向量添加到文档中
+                doc["embedding"] = convert_vector_to_list(embedding)
+                doc["text_for_embedding"] = text_for_embedding
 
-                # 获取文本内容用于向量化
-                text = doc.get(text_field, "")
-                if not text:
-                    # 如果是商家，尝试用name字段
-                    if is_business and text_field == "name":
-                        text = doc.get("name", "")
-                    if not text:
-                        continue
-
-                # 生成向量
-                vector = model.encode(text).tolist()
-
-                # 构建文档
-                source_doc = dict(doc)
-                source_doc[vector_field] = vector
-
-                # 如果是商家，添加地理位置字段
-                if is_business and "latitude" in doc and "longitude" in doc:
-                    source_doc["location"] = {
-                        "lat": float(doc["latitude"]),
-                        "lon": float(doc["longitude"])
-                    }
-
-                # 构建action
+                # 7. 构建 action
                 action = {
                     "_index": index_name,
-                    "_id": doc.get("business_id") or doc.get("review_id"),
-                    "_source": source_doc
+                    "_id": doc.get("yelp_business"),  # 确保这个字段存在
+                    "_source": doc
                 }
-
                 batch_actions.append(action)
                 total_count += 1
 
                 # 批量提交
                 if len(batch_actions) >= BATCH_SIZE:
-                    success, errors = helpers.bulk(
+                    success, errors = bulk(
                         client,
                         batch_actions,
-                        stats_only=True,
-                        raise_on_error=False
+                        chunk_size=BATCH_SIZE
                     )
                     success_count += success
                     error_count += len(errors) if errors else 0
@@ -185,11 +199,9 @@ def bulk_import(client, file_path, index_name, vector_field, text_field, is_busi
 
         # 处理剩余的数据
         if batch_actions:
-            success, errors = helpers.bulk(
+            success, errors = bulk(
                 client,
                 batch_actions,
-                stats_only=True,
-                raise_on_error=False
             )
             success_count += success
             error_count += len(errors) if errors else 0
@@ -237,13 +249,13 @@ def main():
     print("Yelp数据导入OpenSearch工具")
     print("=" * 60)
 
-    # 1. 连接OpenSearch
+    # 连接OpenSearch
     client = get_opensearch_client()
     if not client:
         print("❌ 无法连接到OpenSearch，请检查服务是否启动")
         return
 
-    # 2. 检查数据文件
+    # 检查数据文件
     if not os.path.exists(BUSINESS_FILE):
         print(f"❌ 找不到商家数据文件: {BUSINESS_FILE}")
         print("   请先运行 prepare_data.py")
@@ -254,20 +266,15 @@ def main():
     print(f"   商家文件: {BUSINESS_FILE}")
 
 
-    # 3. 创建索引
-    create_indexes(client)
 
-    # 4. 导入商家数据
+    # 导入商家数据
     bulk_import(
         client=client,
         file_path=BUSINESS_FILE,
         index_name=BUSINESS_INDEX,
-        vector_field="bio_vector",
-        text_field="name",  # 使用name字段生成向量
-        is_business=True
     )
 
-    # 5. 导入评论数据
+    # 导入评论数据
     # bulk_import(
     #     client=client,
     #     file_path=REVIEW_FILE,
@@ -277,7 +284,7 @@ def main():
     #     is_business=False
     # )
 
-    # 6. 验证数据
+    # 验证数据
     verify_data(client)
 
     print("\n" + "=" * 60)
