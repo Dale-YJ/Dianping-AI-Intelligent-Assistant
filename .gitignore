@@ -2,7 +2,7 @@
 .venv
 __pycache__
 knowledge_base
-config.py
+base_config/config.py
 models
 .env
 
