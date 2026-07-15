@@ -5,18 +5,32 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from ..schemas.schemas import ChatRequest, ChatResponse
-from ..services.conversation import (
-    clear_conversation,
-    get_history,
-    get_or_create_conversation,
-)
-from ..services.rag_service import (
-    _build_recommendations,
-    rag_generate,
-    rag_stream,
-)
-from ..services.search_service import search_businesses
+try:
+    from ..schemas.schemas import ChatRequest, ChatResponse
+    from ..services.conversation import (
+        clear_conversation,
+        get_history,
+        get_or_create_conversation,
+    )
+    from ..services.rag_service import (
+        _build_recommendations,
+        rag_generate,
+        rag_stream,
+    )
+    from ..services.search_service import search_businesses
+except ImportError:
+    from app.schemas.schemas import ChatRequest, ChatResponse  # type: ignore[no-redef]
+    from app.services.conversation import (  # type: ignore[no-redef]
+        clear_conversation,
+        get_history,
+        get_or_create_conversation,
+    )
+    from app.services.rag_service import (  # type: ignore[no-redef]
+        _build_recommendations,
+        rag_generate,
+        rag_stream,
+    )
+    from app.services.search_service import search_businesses  # type: ignore[no-redef]
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
