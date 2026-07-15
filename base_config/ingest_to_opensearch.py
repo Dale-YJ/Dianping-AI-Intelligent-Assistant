@@ -6,6 +6,9 @@ import json
 import os
 import time
 from opensearch_client import get_opensearch_client
+import threading
+
+
 
 # 当前文件路径
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -101,6 +104,27 @@ BATCH_SIZE = 500
 #     print(f"创建索引: {BUSINESS_INDEX}")
 #
 
+
+
+class ModelSingleton:
+    """线程安全的 SentenceTransformer 单例"""
+
+    _model = None
+    _lock = threading.Lock()
+    _model_path = '../models/all-MiniLM-L6-v2'
+
+    @classmethod
+    def get_model(cls):
+        # 第一次检查（无锁，提升性能）
+        if cls._model is None:
+            with cls._lock:
+                # 第二次检查（防止多线程同时通过第一次检查）
+                if cls._model is None:
+                    cls._model = SentenceTransformer(cls._model_path)
+        return cls._model
+
+
+
 def traverse_json(data,prefix="", result=""):
     """
     递归遍历JSON数据，将所有字段内容拼接到字符串中
@@ -141,8 +165,8 @@ def bulk_import(client, file_path, index_name):
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
 
-    # 加载模型
-    model = SentenceTransformer('../models/all-MiniLM-L6-v2')
+
+    model = ModelSingleton.get_model()
     total_count = 0
     success_count = 0
     error_count = 0
@@ -165,7 +189,7 @@ def bulk_import(client, file_path, index_name):
                 # 7. 构建 action
                 action = {
                     "_index": index_name,
-                    "_id": doc.get("yelp_business"),  # 确保这个字段存在
+                    "_id": doc.get("yelp_business"),
                     "_source": doc
                 }
                 batch_actions.append(action)
@@ -255,17 +279,30 @@ def main():
         print("❌ 无法连接到OpenSearch，请检查服务是否启动")
         return
 
+
     # 检查数据文件
     if not os.path.exists(BUSINESS_FILE):
         print(f"❌ 找不到商家数据文件: {BUSINESS_FILE}")
         print("   请先运行 prepare_data.py")
         return
-
+    if not os.path.exists(REVIEW_FILE):
+        print(f"❌ 找不到评论数据文件: {REVIEW_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
+    if not os.path.exists(CHECKIN_FILE):
+        print(f"❌ 找不到登录数据文件: {CHECKIN_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
+    if not os.path.exists(TIP_FILE):
+        print(f"❌ 找不到tip数据文件: {TIP_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
+    if not os.path.exists(USER_FILE):
+        print(f"❌ 找不到user数据文件: {USER_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
 
     print(f"\n数据文件检查通过:")
-    print(f"   商家文件: {BUSINESS_FILE}")
-
-
 
     # 导入商家数据
     bulk_import(
@@ -273,20 +310,31 @@ def main():
         file_path=BUSINESS_FILE,
         index_name=BUSINESS_INDEX,
     )
-
     # 导入评论数据
-    # bulk_import(
-    #     client=client,
-    #     file_path=REVIEW_FILE,
-    #     index_name=REVIEW_INDEX,
-    #     vector_field="text_vector",
-    #     text_field="text",  # 使用text字段生成向量
-    #     is_business=False
-    # )
+    bulk_import(
+        client=client,
+        file_path=REVIEW_FILE,
+        index_name=REVIEW_INDEX,
+    )
+    bulk_import(
+        client=client,
+        file_path=CHECKIN_FILE,
+        index_name=CHECKIN_INDEX,
+    )
+    bulk_import(
+        client=client,
+        file_path=TIP_FILE,
+        index_name=TIP_INDEX,
+    )
+    bulk_import(
+        client=client,
+        file_path=USER_FILE,
+        index_name=USER_INDEX,
+    )
+
 
     # 验证数据
     verify_data(client)
-
     print("\n" + "=" * 60)
     print("🎉🎉🎉 数据导入完成!")
     print("=" * 60)
