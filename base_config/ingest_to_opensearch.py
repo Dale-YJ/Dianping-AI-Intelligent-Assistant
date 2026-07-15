@@ -38,73 +38,6 @@ VECTOR_DIM = 384
 BATCH_SIZE = 500
 
 
-# ============================================
-#
-# def create_indexes(client):
-#     """创建索引"""
-#     print("\n 创建索引...")
-#
-#     # 删除已存在的索引
-#     for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
-#         if client.indices.exists(index=index_name):
-#             print(f"   删除旧索引: {index_name}")
-#             client.indices.delete(index=index_name)
-#
-#     # 商家索引
-#     business_mapping = {
-#         "settings": {
-#             "index": {
-#                 "knn": True,
-#                 "number_of_shards": 1,
-#                 "number_of_replicas": 0
-#             }
-#         },
-#         "mappings": {
-#             "properties": {
-#                 "business_id": {"type": "keyword"},
-#                 "name": {"type": "text"},
-#                 "address": {"type": "text"},
-#                 "city": {"type": "keyword"},
-#                 "state": {"type": "keyword"},
-#                 "postal_code": {"type": "keyword"},
-#                 "location": {"type": "geo_point"},  # 地理坐标点
-#                 "stars": {"type": "float"},
-#                 "review_count": {"type": "integer"},
-#                 "is_open": {"type": "boolean"},
-#                 "attributes": {
-#                     "properties": {
-#                         "RestaurantsTakeOut": {"type": "boolean"},
-#                         "BusinessParking": {
-#                             "properties": {
-#                                 "garage": {"type": "boolean"},
-#                                 "street": {"type": "boolean"},
-#                                 "validated": {"type": "boolean"},
-#                                 "lot": {"type": "boolean"},
-#                                 "valet": {"type": "boolean"}
-#                             }
-#                         }
-#                     }
-#                 },
-#             "categories": {"type": "keyword"},
-#             "hours": {
-#                 "properties": {
-#                     "Monday": {"type": "keyword"},
-#                     "Tuesday": {"type": "keyword"},
-#                     "Wednesday": {"type": "keyword"},
-#                     "Thursday": {"type": "keyword"},
-#                     "Friday": {"type": "keyword"},
-#                     "Saturday": {"type": "keyword"},
-#                     "Sunday": {"type": "keyword"}
-#                 }
-#             }
-#         }
-#     },
-#     }
-#     client.indices.create(index=BUSINESS_INDEX, body=business_mapping)
-#     print(f"创建索引: {BUSINESS_INDEX}")
-#
-
-
 
 class ModelSingleton:
     """线程安全的 SentenceTransformer 单例"""
@@ -266,8 +199,6 @@ def verify_data(client):
         stars = source.get("stars", "N/A")
         print(f"   - {name} ({city}) ★{stars}")
 
-
-
 def main():
     print("=" * 60)
     print("Yelp数据导入OpenSearch工具")
@@ -338,10 +269,6 @@ def main():
     print("\n" + "=" * 60)
     print("🎉🎉🎉 数据导入完成!")
     print("=" * 60)
-    print("\n下一步建议:")
-    print("1. 打开浏览器访问 http://localhost:5601 (Kibana)")
-    print("2. 在Dev Tools中执行: GET yelp_business/_search")
-    print("3. 开始开发你的RAG查询功能!")
 
 
 if __name__ == "__main__":
