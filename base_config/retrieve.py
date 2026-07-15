@@ -1,3 +1,5 @@
+import threading
+
 from opensearch_client import get_opensearch_client
 from ingest_to_opensearch import ModelSingleton
 from typing import Literal
@@ -130,6 +132,9 @@ def hybrid_search(
     resp = client.search(index=index_name, body=body)
     return _format_hits(resp)
 
+# 全局锁和实例缓存
+_retriever_lock = threading.RLock()
+_retriever_instances = {}
 
 class OpenSearchRetriever(BaseRetriever):
     """
@@ -171,6 +176,25 @@ class OpenSearchRetriever(BaseRetriever):
             for h in hits
         ]
 
+    @classmethod
+    def get_instance(cls, **kwargs) -> "OpenSearchRetriever":
+        """线程安全的单例获取方法"""
+        # 创建缓存键（基于参数）
+        key = (
+            kwargs.get("mode", "hybrid"),
+            kwargs.get("k", 5),
+            kwargs.get("vector_boost", 2.0),
+            kwargs.get("bm25_boost", 1.0),
+            kwargs.get("index_name"),
+        )
+
+        # 双重检查锁
+        if key not in _retriever_instances:
+            with _retriever_lock:
+                if key not in _retriever_instances:
+                    _retriever_instances[key] = cls(**kwargs)
+
+        return _retriever_instances[key]
 
 def get_retriever(
         mode: Literal["vector", "bm25", "hybrid"] = "hybrid",
@@ -178,7 +202,11 @@ def get_retriever(
         **kwargs,
 ) -> OpenSearchRetriever:
     """便捷工厂"""
-    return OpenSearchRetriever(mode=mode, k=k, **kwargs)
+    return OpenSearchRetriever.get_instance(
+        mode=mode,
+        k=k,
+        **kwargs
+    )
 
 
 if __name__ == "__main__":
