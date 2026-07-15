@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from ..models.schemas import ChatRequest, ChatResponse
+from ..schemas.schemas import ChatRequest, ChatResponse
 from ..services.conversation import (
     clear_conversation,
     get_history,

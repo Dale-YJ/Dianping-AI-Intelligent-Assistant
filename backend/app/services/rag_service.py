@@ -13,7 +13,7 @@ import json
 from typing import AsyncIterator
 
 from ..core.config import settings
-from ..models.schemas import RecommendationItem, SourceInfo
+from ..schemas.schemas import RecommendationItem, SourceInfo
 from .conversation import (
     add_message,
     get_history,
