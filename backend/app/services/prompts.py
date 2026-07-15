@@ -8,7 +8,7 @@ extract structured search requirements from the conversation.
 
 from __future__ import annotations
 
-from app.services.search_service import search_reviews_for_business
+from .search_service import search_reviews_for_business
 
 # ═══════════════════════════════════════════════════════════════
 # System Prompts

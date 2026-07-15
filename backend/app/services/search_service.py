@@ -8,7 +8,7 @@ import numpy as np
 from opensearchpy import OpenSearch
 from sentence_transformers import SentenceTransformer
 
-from app.core.config import settings
+from ..core.config import settings
 
 # ── Globals (lazy init) ──────────────────────────────────
 _os_client: OpenSearch | None = None

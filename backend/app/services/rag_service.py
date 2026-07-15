@@ -12,22 +12,22 @@ from __future__ import annotations
 import json
 from typing import AsyncIterator
 
-from app.core.config import settings
-from app.models.schemas import RecommendationItem, SourceInfo
-from app.services.conversation import (
+from ..core.config import settings
+from ..models.schemas import RecommendationItem, SourceInfo
+from .conversation import (
     add_message,
     get_history,
     get_or_create_conversation,
 )
-from app.services.llm_client import get_llm
-from app.services.prompts import (
+from .llm_client import get_llm
+from .prompts import (
     FALLBACK_MESSAGE,
     SYSTEM_PROMPT,
     build_clarify_prompt,
     build_context,
     build_user_prompt,
 )
-from app.services.search_service import search_businesses, search_reviews_for_business
+from .search_service import search_businesses, search_reviews_for_business
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -26,7 +26,7 @@ _lock = threading.Lock()
 
 def _get_settings():
     """Lazy-import settings so the module can also run standalone."""
-    from app.core.config import settings
+    from ..core.config import settings
     return settings
 
 

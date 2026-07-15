@@ -5,18 +5,18 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.models.schemas import ChatRequest, ChatResponse
-from app.services.conversation import (
+from ..models.schemas import ChatRequest, ChatResponse
+from ..services.conversation import (
     clear_conversation,
     get_history,
     get_or_create_conversation,
 )
-from app.services.rag_service import (
+from ..services.rag_service import (
     _build_recommendations,
     rag_generate,
     rag_stream,
 )
-from app.services.search_service import search_businesses
+from ..services.search_service import search_businesses
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -45,8 +45,6 @@ async def chat_stream(req: ChatRequest):
 @router.post("/send", response_model=ChatResponse)
 async def chat_send(req: ChatRequest):
     """Non-streaming fallback: returns the complete AI response at once."""
-    from app.services.prompts import FALLBACK_MESSAGE
-
     conv_id, text, recs = await rag_generate(req.message, req.conversation_id)
 
     is_fallback = len(recs) == 0
