@@ -5,6 +5,10 @@ from sentence_transformers import SentenceTransformer
 import json
 import os
 import time
+<<<<<<< HEAD
+=======
+import threading
+>>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
 from opensearch_client import get_opensearch_client
 
 # 当前文件路径
@@ -35,6 +39,7 @@ VECTOR_DIM = 384
 BATCH_SIZE = 500
 
 
+<<<<<<< HEAD
 # ============================================
 #
 # def create_indexes(client):
@@ -100,6 +105,26 @@ BATCH_SIZE = 500
 #     client.indices.create(index=BUSINESS_INDEX, body=business_mapping)
 #     print(f"创建索引: {BUSINESS_INDEX}")
 #
+=======
+
+
+class ModelSingleton:
+    """线程安全的 SentenceTransformer 单例"""
+    _model = None
+    _lock = threading.Lock()
+    _model_path = '../models/all-MiniLM-L6-v2'
+
+    @classmethod
+    def get_model(cls):
+        # 第一次检查（无锁，提升性能）
+        if cls._model is None:
+            with cls._lock:
+                # 第二次检查（防止多线程同时通过第一次检查）
+                if cls._model is None:
+                    cls._model = SentenceTransformer(cls._model_path)
+        return cls._model
+
+>>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
 
 def traverse_json(data,prefix="", result=""):
     """
@@ -136,13 +161,54 @@ def convert_vector_to_list(vector):
         return vector.tolist()
     return vector
 
+def create_knn_index(client, index_name):
+    if client.indices.exists(index=index_name):
+        print(f"✅ 索引已存在: {index_name}")
+        return
 
+<<<<<<< HEAD
+=======
+    mapping = {
+        "settings": {
+            "index": {
+                "knn": True
+            }
+        },
+        "mappings": {
+            "properties": {
+                "embedding": {
+                    "type": "knn_vector",
+                    "dimension": VECTOR_DIM,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": "cosinesimil"
+                    }
+                },
+                "text_for_embedding": {
+                    "type": "text"
+                }
+            }
+        }
+    }
+
+    client.indices.create(index=index_name, body=mapping)
+    print(f"✅ 创建 KNN 索引: {index_name}")
+
+
+>>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
 def bulk_import(client, file_path, index_name):
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
+    #创建索引
+    create_knn_index(client, index_name)
 
     # 加载模型
+<<<<<<< HEAD
     model = SentenceTransformer('../models/all-MiniLM-L6-v2')
+=======
+
+    model = ModelSingleton.get_model()
+>>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
     total_count = 0
     success_count = 0
     error_count = 0
@@ -162,10 +228,30 @@ def bulk_import(client, file_path, index_name):
                 doc["embedding"] = convert_vector_to_list(embedding)
                 doc["text_for_embedding"] = text_for_embedding
 
+<<<<<<< HEAD
                 # 7. 构建 action
                 action = {
                     "_index": index_name,
                     "_id": doc.get("yelp_business"),  # 确保这个字段存在
+=======
+                doc_id = doc.get("business_id")
+                if index_name == BUSINESS_INDEX:
+                    doc_id = doc.get("business_id")
+                elif index_name == REVIEW_INDEX:
+                    doc_id = doc.get("review_id")
+                elif index_name == CHECKIN_INDEX:
+                    doc_id = doc.get("business_id")
+                elif index_name == TIP_INDEX:
+                    doc_id = doc.get("user_id")
+                elif index_name == USER_INDEX:
+                    doc_id = doc.get("user_id")
+
+
+                # 7. 构建 action
+                action = {
+                    "_index": index_name,
+                    "_id": doc_id,
+>>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
                     "_source": doc
                 }
                 batch_actions.append(action)
@@ -220,7 +306,7 @@ def verify_data(client):
     print("\n🔍 验证导入结果...")
 
     # 检查索引是否存在
-    for index_name in [BUSINESS_INDEX, REVIEW_INDEX]:
+    for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
         if client.indices.exists(index=index_name):
             count = client.count(index=index_name)['count']
             print(f"   {index_name}: {count}条记录")
@@ -260,10 +346,24 @@ def main():
         print(f"❌ 找不到商家数据文件: {BUSINESS_FILE}")
         print("   请先运行 prepare_data.py")
         return
-
+    if not os.path.exists(REVIEW_FILE):
+        print(f"❌ 找不到评论数据文件: {REVIEW_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
+    if not os.path.exists(CHECKIN_FILE):
+        print(f"❌ 找不到登录数据文件: {CHECKIN_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
+    if not os.path.exists(TIP_FILE):
+        print(f"❌ 找不到tip数据文件: {TIP_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
+    if not os.path.exists(USER_FILE):
+        print(f"❌ 找不到user数据文件: {USER_FILE}")
+        print("   请先运行 prepare_data.py")
+        return
 
     print(f"\n数据文件检查通过:")
-    print(f"   商家文件: {BUSINESS_FILE}")
 
 
 
@@ -273,17 +373,27 @@ def main():
         file_path=BUSINESS_FILE,
         index_name=BUSINESS_INDEX,
     )
-
-    # 导入评论数据
-    # bulk_import(
-    #     client=client,
-    #     file_path=REVIEW_FILE,
-    #     index_name=REVIEW_INDEX,
-    #     vector_field="text_vector",
-    #     text_field="text",  # 使用text字段生成向量
-    #     is_business=False
-    # )
-
+    # # 导入评论数据
+    bulk_import(
+        client=client,
+        file_path=REVIEW_FILE,
+        index_name=REVIEW_INDEX,
+    )
+    bulk_import(
+        client=client,
+        file_path=CHECKIN_FILE,
+        index_name=CHECKIN_INDEX,
+    )
+    bulk_import(
+        client=client,
+        file_path=TIP_FILE,
+        index_name=TIP_INDEX,
+    )
+    bulk_import(
+        client=client,
+        file_path=USER_FILE,
+        index_name=USER_INDEX,
+    )
     # 验证数据
     verify_data(client)
 
