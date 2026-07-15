@@ -6,5 +6,5 @@ base_config/__init__.py
 base_config/config.py
 models
 .env
-ingest_to_opensearch.py
+base_config/ingest_to_opensearch.py
 
