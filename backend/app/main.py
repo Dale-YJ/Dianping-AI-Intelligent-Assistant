@@ -14,7 +14,7 @@ from app.core.config import settings
 async def lifespan(app: FastAPI):
     """Startup / shutdown."""
     # Pre-load embedding model on startup (avoid lazy-init delay on first request)
-    from app.services.search_service import _get_embedding_model as _preload_embedding
+    from app.services.chat_services.search_service import _get_embedding_model as _preload_embedding
     _preload_embedding()
     yield
 

@@ -6,18 +6,18 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 try:
-    from ..schemas.schemas import ChatRequest, ChatResponse
-    from ..services.conversation import (
+    from backend.app.schemas.chat_schemas.schemas import ChatRequest, ChatResponse
+    from backend.app.services.chat_services.conversation import (
         clear_conversation,
         get_history,
         get_or_create_conversation,
     )
-    from ..services.rag_service import (
+    from backend.app.services.chat_services.rag_service import (
         _build_recommendations,
         rag_generate,
         rag_stream,
     )
-    from ..services.search_service import search_businesses
+    from backend.app.services.chat_services.search_service import search_businesses
 except ImportError:
     from app.schemas.schemas import ChatRequest, ChatResponse  # type: ignore[no-redef]
     from app.services.conversation import (  # type: ignore[no-redef]

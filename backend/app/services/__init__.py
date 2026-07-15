@@ -7,14 +7,14 @@ Import what callers need from here, or import directly from sub-modules::
 """
 
 from .llm_client import get_llm, reset_llm
-from .conversation import (
+from backend.app.services.chat_services.conversation import (
     add_message,
     clear_conversation,
     get_history,
     get_or_create_conversation,
     get_recent_history,
 )
-from .prompts import (
+from backend.app.services.chat_services.prompts import (
     SYSTEM_PROMPT,
     CLARIFY_PROMPT,
     FALLBACK_MESSAGE,
@@ -22,7 +22,7 @@ from .prompts import (
     build_user_prompt,
     build_clarify_prompt,
 )
-from .rag_service import rag_stream, rag_generate
+from backend.app.services.chat_services.rag_service import rag_stream, rag_generate
 
 __all__ = [
     # llm_client

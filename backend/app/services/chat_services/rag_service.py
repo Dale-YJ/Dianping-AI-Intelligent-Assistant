@@ -12,18 +12,17 @@ from __future__ import annotations
 import json
 from typing import AsyncIterator
 
-from ..core.config import settings
-from ..schemas.schemas import RecommendationItem, SourceInfo
+from backend.app.core.config import settings
+from backend.app.schemas.chat_schemas.schemas import RecommendationItem, SourceInfo
 from .conversation import (
     add_message,
     get_history,
     get_or_create_conversation,
 )
-from .llm_client import get_llm
+from backend.app.services.llm_client import get_llm
 from .prompts import (
     FALLBACK_MESSAGE,
     SYSTEM_PROMPT,
-    build_clarify_prompt,
     build_context,
     build_user_prompt,
 )
