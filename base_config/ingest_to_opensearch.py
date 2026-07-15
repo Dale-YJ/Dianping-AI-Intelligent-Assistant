@@ -1,13 +1,10 @@
-import ast
-import json
-import os
-import time
-
 import numpy as np
 from opensearchpy import OpenSearch, helpers
 from opensearchpy.helpers import bulk
 from sentence_transformers import SentenceTransformer
-
+import json
+import os
+import time
 from opensearch_client import get_opensearch_client
 
 # 当前文件路径
@@ -34,61 +31,75 @@ USER_INDEX="yelp_user"
 # 向量维度 (all-MiniLM-L6-v2模型)
 VECTOR_DIM = 384
 
-# 批量处理大小（小批次避免 OpenSearch 压力过大）
+# 批量处理大小
 BATCH_SIZE = 500
-# bulk 请求超时（秒），防止 OpenSearch 无响应时永久阻塞
-REQUEST_TIMEOUT = 60
 
 
-
-def create_indexes(client):
-    """先删后建索引，mapping 对 attributes/hours 不做内部字段解析"""
-    print("\n 准备索引...")
-
-    body = {
-        "settings": {
-            "index": {
-                "knn": True,
-                "number_of_replicas": 0,
-            }
-        },
-        "mappings": {
-            "properties": {
-                "business_id":       {"type": "keyword"},
-                "name":              {"type": "text"},
-                "address":           {"type": "text"},
-                "city":              {"type": "keyword"},
-                "state":             {"type": "keyword"},
-                "postal_code":       {"type": "keyword"},
-                "latitude":          {"type": "float"},
-                "longitude":         {"type": "float"},
-                "stars":             {"type": "float"},
-                "review_count":      {"type": "integer"},
-                "is_open":           {"type": "boolean"},
-                "categories":        {"type": "keyword"},
-                "attributes":        {"type": "object", "enabled": False},
-                "hours":             {"type": "object", "enabled": False},
-                "embedding": {
-                    "type": "knn_vector",
-                    "dimension": VECTOR_DIM,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": "cosinesimil",
-                        "engine": "nmslib",
-                    },
-                },
-                "text_for_embedding": {"type": "text"},
-            }
-        },
-    }
-
-    if client.indices.exists(index=BUSINESS_INDEX):
-        print(f"   删除旧索引: {BUSINESS_INDEX}")
-        client.indices.delete(index=BUSINESS_INDEX)
-
-    client.indices.create(index=BUSINESS_INDEX, body=body)
-    print(f"   创建索引: {BUSINESS_INDEX} (attributes/hours enabled=false, knn_vector)")
-
+# ============================================
+#
+# def create_indexes(client):
+#     """创建索引"""
+#     print("\n 创建索引...")
+#
+#     # 删除已存在的索引
+#     for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
+#         if client.indices.exists(index=index_name):
+#             print(f"   删除旧索引: {index_name}")
+#             client.indices.delete(index=index_name)
+#
+#     # 商家索引
+#     business_mapping = {
+#         "settings": {
+#             "index": {
+#                 "knn": True,
+#                 "number_of_shards": 1,
+#                 "number_of_replicas": 0
+#             }
+#         },
+#         "mappings": {
+#             "properties": {
+#                 "business_id": {"type": "keyword"},
+#                 "name": {"type": "text"},
+#                 "address": {"type": "text"},
+#                 "city": {"type": "keyword"},
+#                 "state": {"type": "keyword"},
+#                 "postal_code": {"type": "keyword"},
+#                 "location": {"type": "geo_point"},  # 地理坐标点
+#                 "stars": {"type": "float"},
+#                 "review_count": {"type": "integer"},
+#                 "is_open": {"type": "boolean"},
+#                 "attributes": {
+#                     "properties": {
+#                         "RestaurantsTakeOut": {"type": "boolean"},
+#                         "BusinessParking": {
+#                             "properties": {
+#                                 "garage": {"type": "boolean"},
+#                                 "street": {"type": "boolean"},
+#                                 "validated": {"type": "boolean"},
+#                                 "lot": {"type": "boolean"},
+#                                 "valet": {"type": "boolean"}
+#                             }
+#                         }
+#                     }
+#                 },
+#             "categories": {"type": "keyword"},
+#             "hours": {
+#                 "properties": {
+#                     "Monday": {"type": "keyword"},
+#                     "Tuesday": {"type": "keyword"},
+#                     "Wednesday": {"type": "keyword"},
+#                     "Thursday": {"type": "keyword"},
+#                     "Friday": {"type": "keyword"},
+#                     "Saturday": {"type": "keyword"},
+#                     "Sunday": {"type": "keyword"}
+#                 }
+#             }
+#         }
+#     },
+#     }
+#     client.indices.create(index=BUSINESS_INDEX, body=business_mapping)
+#     print(f"创建索引: {BUSINESS_INDEX}")
+#
 
 def traverse_json(data,prefix="", result=""):
     """
@@ -126,124 +137,87 @@ def convert_vector_to_list(vector):
     return vector
 
 
-def _clean_doc(doc):
-    """修正 Yelp 原始数据类型问题"""
-    # is_open: 0/1 → True/False
-    if "is_open" in doc and isinstance(doc["is_open"], int):
-        doc["is_open"] = bool(doc["is_open"])
-
-    # attributes: "True"/"False" → 布尔值, "{...}" → dict
-    if "attributes" in doc and isinstance(doc["attributes"], dict):
-        for k, v in doc["attributes"].items():
-            if isinstance(v, str):
-                if v in ("True", "False"):
-                    doc["attributes"][k] = (v == "True")
-                elif v.startswith("{") and v.endswith("}"):
-                    try:
-                        doc["attributes"][k] = ast.literal_eval(v)
-                    except (ValueError, SyntaxError):
-                        pass
-
-    # hours: 值统一为字符串
-    if "hours" in doc and isinstance(doc["hours"], dict):
-        for k, v in doc["hours"].items():
-            if not isinstance(v, str):
-                doc["hours"][k] = str(v)
-
-
 def bulk_import(client, file_path, index_name):
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
 
-    # 加载模型（绝对路径）
-    model_path = os.path.join(BASE_DIR, "models", "all-MiniLM-L6-v2")
-    print(f"   加载模型: {model_path} ...", end="", flush=True)
-    model = SentenceTransformer(model_path)
-    print(" 完成")
-
+    # 加载模型
+    model = SentenceTransformer(os.path.join(BASE_DIR, 'models', 'all-MiniLM-L6-v2'))
     total_count = 0
     success_count = 0
     error_count = 0
     batch_actions = []
     start_time = time.time()
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             try:
+                #获取每一行的Json数据
                 doc = json.loads(line.strip())
-                _clean_doc(doc)
-
+                # 创建用于向量化的文本
                 text_for_embedding = traverse_json(doc)
+                # 生成向量嵌入
                 embedding = model.encode(text_for_embedding, convert_to_numpy=True)
+                # 将向量添加到文档中
                 doc["embedding"] = convert_vector_to_list(embedding)
                 doc["text_for_embedding"] = text_for_embedding
 
-                doc_id = doc.get("business_id")
+                # 7. 构建 action
                 action = {
                     "_index": index_name,
-                    "_id": doc_id,
-                    "_source": doc,
+                    "_id": doc.get("yelp_business"),  # 确保这个字段存在
+                    "_source": doc
                 }
                 batch_actions.append(action)
                 total_count += 1
 
-                if total_count % 50 == 0:
-                    elapsed = time.time() - start_time
-                    rate = total_count / elapsed if elapsed > 0 else 0
-                    print(f"   已生成 embedding: {total_count} 条 | 速率: {rate:.1f} 条/秒")
-
+                # 批量提交
                 if len(batch_actions) >= BATCH_SIZE:
-                    ok, err = _send_batch(client, batch_actions, total_count)
-                    success_count += ok
-                    error_count += err
+                    success, errors = bulk(
+                        client,
+                        batch_actions,
+                        chunk_size=BATCH_SIZE
+                    )
+                    success_count += success
+                    error_count += len(errors) if errors else 0
+
+                    elapsed = time.time() - start_time
+                    rate = success_count / elapsed if elapsed > 0 else 0
+                    print(
+                        f"   已处理: {total_count}条 | 成功: {success_count} | 失败: {error_count} | 速率: {rate:.1f}条/秒")
+
                     batch_actions = []
 
             except json.JSONDecodeError as e:
-                print(f"   第{line_num}行 JSON 解析错误: {e}")
+                print(f"   第{line_num}行JSON解析错误: {e}")
                 error_count += 1
+                continue
             except Exception as e:
-                print(f"   第{line_num}行处理出错: {e}")
+                print(f"   处理第{line_num}行时出错: {e}")
                 error_count += 1
+                continue
 
+        # 处理剩余的数据
         if batch_actions:
-            ok, err = _send_batch(client, batch_actions, total_count)
-            success_count += ok
-            error_count += err
+            success, errors = bulk(
+                client,
+                batch_actions,
+            )
+            success_count += success
+            error_count += len(errors) if errors else 0
 
     elapsed = time.time() - start_time
     print(f"\n[OK] {index_name} 导入完成!")
-    print(f"   总处理: {total_count}条 | 成功: {success_count} | 失败: {error_count}")
-    print(f"   耗时: {elapsed:.1f}秒", end="")
-    if elapsed > 0:
-        print(f" | 平均: {total_count / elapsed:.1f}条/秒")
-    else:
-        print()
-
-
-def _send_batch(client, batch, total_count):
-    """发送一批数据到 OpenSearch，返回 (成功数, 失败数)"""
-    n = len(batch)
-    print(f"   >>> 发送 {total_count - n + 1}~{total_count} 条 ...", end="", flush=True)
-    t0 = time.time()
-    try:
-        result = bulk(
-            client, batch,
-            chunk_size=BATCH_SIZE,
-            request_timeout=REQUEST_TIMEOUT,
-            raise_on_error=False,
-        )
-        ok_cnt = result[0]
-        err_cnt = len(result[1]) if result[1] else 0
-        print(f" 完成 ({time.time() - t0:.1f}s) 成功: {ok_cnt}, 失败: {err_cnt}")
-        return ok_cnt, err_cnt
-    except Exception as e:
-        print(f" 失败 ({time.time() - t0:.1f}s)\n   [ERROR] {e}")
-        return 0, n
+    print(f"   总处理: {total_count}条")
+    print(f"   成功: {success_count}条")
+    print(f"   失败: {error_count}条")
+    print(f"   耗时: {elapsed:.1f}秒")
+    print(f"   平均速度: {success_count / elapsed:.1f}条/秒")
 
 
 def verify_data(client):
     """验证导入的数据"""
-    print("\n🔍 验证导入结果...")
+    print("\n[*] 验证导入结果...")
 
     # 检查索引是否存在
     for index_name in [BUSINESS_INDEX, REVIEW_INDEX]:
@@ -278,12 +252,12 @@ def main():
     # 连接OpenSearch
     client = get_opensearch_client()
     if not client:
-        print("❌ 无法连接到OpenSearch，请检查服务是否启动")
+        print("[ERROR] 无法连接到OpenSearch，请检查服务是否启动")
         return
 
     # 检查数据文件
     if not os.path.exists(BUSINESS_FILE):
-        print(f"❌ 找不到商家数据文件: {BUSINESS_FILE}")
+        print(f"[ERROR] 找不到商家数据文件: {BUSINESS_FILE}")
         print("   请先运行 prepare_data.py")
         return
 
@@ -291,8 +265,7 @@ def main():
     print(f"\n数据文件检查通过:")
     print(f"   商家文件: {BUSINESS_FILE}")
 
-    # 创建/重建索引
-    create_indexes(client)
+
 
     # 导入商家数据
     bulk_import(
@@ -315,7 +288,7 @@ def main():
     verify_data(client)
 
     print("\n" + "=" * 60)
-    print("🎉🎉🎉 数据导入完成!")
+    print("=== 数据导入完成! ===")
     print("=" * 60)
     print("\n下一步建议:")
     print("1. 打开浏览器访问 http://localhost:5601 (Kibana)")
