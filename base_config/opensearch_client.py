@@ -34,31 +34,37 @@ def get_opensearch_client() -> OpenSearch:
         with _lock:
             # 第二层检查：防止在等待锁期间，其他线程已经创建了实例
             if _opensearch_client is None:
-                _opensearch_client = OpenSearch(
-                    hosts=[{
+                # 构建连接参数
+                os_kwargs = {
+                    "hosts": [{
                         "host": settings.opensearch_host,
                         "port": settings.opensearch_port,
                     }],
-                    http_auth=(settings.opensearch_user, settings.opensearch_password),
-                    use_ssl=settings.opensearch_use_ssl,
-                    verify_certs=False,
-                    ssl_show_warn=False,
-                    # 建议加上超时配置，防止线程无限阻塞
-                    timeout=30,
-                    max_retries=3,
-                    retry_on_timeout=True
-                )
+                    "use_ssl": settings.opensearch_use_ssl,
+                    "verify_certs": False,
+                    "ssl_show_warn": False,
+                    "timeout": 30,
+                    "max_retries": 3,
+                    "retry_on_timeout": True,
+                }
+                # 仅在配置了用户名/密码时启用认证
+                if settings.opensearch_user and settings.opensearch_password:
+                    os_kwargs["http_auth"] = (settings.opensearch_user, settings.opensearch_password)
+
+                _opensearch_client = OpenSearch(**os_kwargs)
 
     return _opensearch_client
 
 
 if __name__ == "__main__":
     client = get_opensearch_client()
-    res = client.get(index="books_demo", id="b001")
-    print(res["_source"])
+    print(f"OpenSearch 已连接: {client.info()['version']['number']}")
+    print(f"yelp_business 文档数: {client.count(index='yelp_business')['count']}")
     res = client.search(
-        index="books_demo",
-        body={"size": 5, "query": {"match_all": {}}}
+        index="yelp_business",
+        body={"size": 3, "query": {"match_all": {}}}
     )
+    print("\n示例商家:")
     for hit in res["hits"]["hits"]:
-        print(hit["_source"]["title"])
+        s = hit["_source"]
+        print(f"  - {s['name']} ({s['city']}, {s['state']}) ★{s['stars']}")
