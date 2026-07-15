@@ -142,7 +142,7 @@ def bulk_import(client, file_path, index_name):
     print(f"\n 导入数据到 {index_name}")
 
     # 加载模型
-    model = SentenceTransformer(os.path.join(BASE_DIR, 'models', 'all-MiniLM-L6-v2'))
+    model = SentenceTransformer('../models/all-MiniLM-L6-v2')
     total_count = 0
     success_count = 0
     error_count = 0
@@ -207,7 +207,7 @@ def bulk_import(client, file_path, index_name):
             error_count += len(errors) if errors else 0
 
     elapsed = time.time() - start_time
-    print(f"\n[OK] {index_name} 导入完成!")
+    print(f"\n✅ {index_name} 导入完成!")
     print(f"   总处理: {total_count}条")
     print(f"   成功: {success_count}条")
     print(f"   失败: {error_count}条")
@@ -217,7 +217,7 @@ def bulk_import(client, file_path, index_name):
 
 def verify_data(client):
     """验证导入的数据"""
-    print("\n[*] 验证导入结果...")
+    print("\n🔍 验证导入结果...")
 
     # 检查索引是否存在
     for index_name in [BUSINESS_INDEX, REVIEW_INDEX]:
@@ -252,12 +252,12 @@ def main():
     # 连接OpenSearch
     client = get_opensearch_client()
     if not client:
-        print("[ERROR] 无法连接到OpenSearch，请检查服务是否启动")
+        print("❌ 无法连接到OpenSearch，请检查服务是否启动")
         return
 
     # 检查数据文件
     if not os.path.exists(BUSINESS_FILE):
-        print(f"[ERROR] 找不到商家数据文件: {BUSINESS_FILE}")
+        print(f"❌ 找不到商家数据文件: {BUSINESS_FILE}")
         print("   请先运行 prepare_data.py")
         return
 
@@ -288,7 +288,7 @@ def main():
     verify_data(client)
 
     print("\n" + "=" * 60)
-    print("=== 数据导入完成! ===")
+    print("🎉🎉🎉 数据导入完成!")
     print("=" * 60)
     print("\n下一步建议:")
     print("1. 打开浏览器访问 http://localhost:5601 (Kibana)")
