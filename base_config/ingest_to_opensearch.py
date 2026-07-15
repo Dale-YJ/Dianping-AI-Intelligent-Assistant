@@ -1,17 +1,12 @@
-import ast
-import json
-import os
-import time
-
 import numpy as np
 from opensearchpy import OpenSearch, helpers
 from opensearchpy.helpers import bulk
 from sentence_transformers import SentenceTransformer
-
-from opensearch_client import get_opensearch_client
+import json
+import os
+import time
 import threading
-
-
+from opensearch_client import get_opensearch_client
 
 # 当前文件路径
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -37,14 +32,14 @@ USER_INDEX="yelp_user"
 # 向量维度 (all-MiniLM-L6-v2模型)
 VECTOR_DIM = 384
 
-# 批量处理大小（小批次避免 OpenSearch 压力过大）
+# 批量处理大小
 BATCH_SIZE = 500
+
 
 
 
 class ModelSingleton:
     """线程安全的 SentenceTransformer 单例"""
-
     _model = None
     _lock = threading.Lock()
     _model_path = '../models/all-MiniLM-L6-v2'
@@ -58,7 +53,6 @@ class ModelSingleton:
                 if cls._model is None:
                     cls._model = SentenceTransformer(cls._model_path)
         return cls._model
-
 
 
 def traverse_json(data,prefix="", result=""):
@@ -96,36 +90,45 @@ def convert_vector_to_list(vector):
         return vector.tolist()
     return vector
 
+def create_knn_index(client, index_name):
+    if client.indices.exists(index=index_name):
+        print(f"✅ 索引已存在: {index_name}")
+        return
 
-def _clean_doc(doc):
-    """修正 Yelp 原始数据类型问题"""
-    # is_open: 0/1 → True/False
-    if "is_open" in doc and isinstance(doc["is_open"], int):
-        doc["is_open"] = bool(doc["is_open"])
+    mapping = {
+        "settings": {
+            "index": {
+                "knn": True
+            }
+        },
+        "mappings": {
+            "properties": {
+                "embedding": {
+                    "type": "knn_vector",
+                    "dimension": VECTOR_DIM,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": "cosinesimil"
+                    }
+                },
+                "text_for_embedding": {
+                    "type": "text"
+                }
+            }
+        }
+    }
 
-    # attributes: "True"/"False" → 布尔值, "{...}" → dict
-    if "attributes" in doc and isinstance(doc["attributes"], dict):
-        for k, v in doc["attributes"].items():
-            if isinstance(v, str):
-                if v in ("True", "False"):
-                    doc["attributes"][k] = (v == "True")
-                elif v.startswith("{") and v.endswith("}"):
-                    try:
-                        doc["attributes"][k] = ast.literal_eval(v)
-                    except (ValueError, SyntaxError):
-                        pass
-
-    # hours: 值统一为字符串
-    if "hours" in doc and isinstance(doc["hours"], dict):
-        for k, v in doc["hours"].items():
-            if not isinstance(v, str):
-                doc["hours"][k] = str(v)
+    client.indices.create(index=index_name, body=mapping)
+    print(f"✅ 创建 KNN 索引: {index_name}")
 
 
 def bulk_import(client, file_path, index_name):
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
+    #创建索引
+    create_knn_index(client, index_name)
 
+    # 加载模型
 
     model = ModelSingleton.get_model()
     total_count = 0
@@ -134,78 +137,83 @@ def bulk_import(client, file_path, index_name):
     batch_actions = []
     start_time = time.time()
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             try:
+                #获取每一行的Json数据
                 doc = json.loads(line.strip())
-                _clean_doc(doc)
-
+                # 创建用于向量化的文本
                 text_for_embedding = traverse_json(doc)
+                # 生成向量嵌入
                 embedding = model.encode(text_for_embedding, convert_to_numpy=True)
+                # 将向量添加到文档中
                 doc["embedding"] = convert_vector_to_list(embedding)
                 doc["text_for_embedding"] = text_for_embedding
 
                 doc_id = doc.get("business_id")
+                if index_name == BUSINESS_INDEX:
+                    doc_id = doc.get("business_id")
+                elif index_name == REVIEW_INDEX:
+                    doc_id = doc.get("review_id")
+                elif index_name == CHECKIN_INDEX:
+                    doc_id = doc.get("business_id")
+                elif index_name == TIP_INDEX:
+                    doc_id = doc.get("user_id")
+                elif index_name == USER_INDEX:
+                    doc_id = doc.get("user_id")
+
+
+                # 7. 构建 action
                 action = {
                     "_index": index_name,
-                    "_id": doc.get("yelp_business"),
+                    "_id": doc_id,
                     "_source": doc
                 }
                 batch_actions.append(action)
                 total_count += 1
 
-                if total_count % 50 == 0:
-                    elapsed = time.time() - start_time
-                    rate = total_count / elapsed if elapsed > 0 else 0
-                    print(f"   已生成 embedding: {total_count} 条 | 速率: {rate:.1f} 条/秒")
-
+                # 批量提交
                 if len(batch_actions) >= BATCH_SIZE:
-                    ok, err = _send_batch(client, batch_actions, total_count)
-                    success_count += ok
-                    error_count += err
+                    success, errors = bulk(
+                        client,
+                        batch_actions,
+                        chunk_size=BATCH_SIZE
+                    )
+                    success_count += success
+                    error_count += len(errors) if errors else 0
+
+                    elapsed = time.time() - start_time
+                    rate = success_count / elapsed if elapsed > 0 else 0
+                    print(
+                        f"   已处理: {total_count}条 | 成功: {success_count} | 失败: {error_count} | 速率: {rate:.1f}条/秒")
+
                     batch_actions = []
 
             except json.JSONDecodeError as e:
-                print(f"   第{line_num}行 JSON 解析错误: {e}")
+                print(f"   第{line_num}行JSON解析错误: {e}")
                 error_count += 1
+                continue
             except Exception as e:
-                print(f"   第{line_num}行处理出错: {e}")
+                print(f"   处理第{line_num}行时出错: {e}")
                 error_count += 1
+                continue
 
+        # 处理剩余的数据
         if batch_actions:
-            ok, err = _send_batch(client, batch_actions, total_count)
-            success_count += ok
-            error_count += err
+            success, errors = bulk(
+                client,
+                batch_actions,
+            )
+            success_count += success
+            error_count += len(errors) if errors else 0
 
     elapsed = time.time() - start_time
-    print(f"\n[OK] {index_name} 导入完成!")
-    print(f"   总处理: {total_count}条 | 成功: {success_count} | 失败: {error_count}")
-    print(f"   耗时: {elapsed:.1f}秒", end="")
-    if elapsed > 0:
-        print(f" | 平均: {total_count / elapsed:.1f}条/秒")
-    else:
-        print()
-
-
-def _send_batch(client, batch, total_count):
-    """发送一批数据到 OpenSearch，返回 (成功数, 失败数)"""
-    n = len(batch)
-    print(f"   >>> 发送 {total_count - n + 1}~{total_count} 条 ...", end="", flush=True)
-    t0 = time.time()
-    try:
-        result = bulk(
-            client, batch,
-            chunk_size=BATCH_SIZE,
-            request_timeout=REQUEST_TIMEOUT,
-            raise_on_error=False,
-        )
-        ok_cnt = result[0]
-        err_cnt = len(result[1]) if result[1] else 0
-        print(f" 完成 ({time.time() - t0:.1f}s) 成功: {ok_cnt}, 失败: {err_cnt}")
-        return ok_cnt, err_cnt
-    except Exception as e:
-        print(f" 失败 ({time.time() - t0:.1f}s)\n   [ERROR] {e}")
-        return 0, n
+    print(f"\n✅ {index_name} 导入完成!")
+    print(f"   总处理: {total_count}条")
+    print(f"   成功: {success_count}条")
+    print(f"   失败: {error_count}条")
+    print(f"   耗时: {elapsed:.1f}秒")
+    print(f"   平均速度: {success_count / elapsed:.1f}条/秒")
 
 
 def verify_data(client):
@@ -213,7 +221,7 @@ def verify_data(client):
     print("\n🔍 验证导入结果...")
 
     # 检查索引是否存在
-    for index_name in [BUSINESS_INDEX, REVIEW_INDEX]:
+    for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
         if client.indices.exists(index=index_name):
             count = client.count(index=index_name)['count']
             print(f"   {index_name}: {count}条记录")
@@ -235,6 +243,8 @@ def verify_data(client):
         stars = source.get("stars", "N/A")
         print(f"   - {name} ({city}) ★{stars}")
 
+
+
 def main():
     print("=" * 60)
     print("Yelp数据导入OpenSearch工具")
@@ -245,7 +255,6 @@ def main():
     if not client:
         print("❌ 无法连接到OpenSearch，请检查服务是否启动")
         return
-
 
     # 检查数据文件
     if not os.path.exists(BUSINESS_FILE):
@@ -271,13 +280,15 @@ def main():
 
     print(f"\n数据文件检查通过:")
 
+
+
     # 导入商家数据
     bulk_import(
         client=client,
         file_path=BUSINESS_FILE,
         index_name=BUSINESS_INDEX,
     )
-    # 导入评论数据
+    # # 导入评论数据
     bulk_import(
         client=client,
         file_path=REVIEW_FILE,
@@ -298,13 +309,16 @@ def main():
         file_path=USER_FILE,
         index_name=USER_INDEX,
     )
-
-
     # 验证数据
     verify_data(client)
+
     print("\n" + "=" * 60)
     print("🎉🎉🎉 数据导入完成!")
     print("=" * 60)
+    print("\n下一步建议:")
+    print("1. 打开浏览器访问 http://localhost:5601 (Kibana)")
+    print("2. 在Dev Tools中执行: GET yelp_business/_search")
+    print("3. 开始开发你的RAG查询功能!")
 
 
 if __name__ == "__main__":
