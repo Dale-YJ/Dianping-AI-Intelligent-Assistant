@@ -5,10 +5,7 @@ from sentence_transformers import SentenceTransformer
 import json
 import os
 import time
-<<<<<<< HEAD
-=======
 import threading
->>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
 from opensearch_client import get_opensearch_client
 
 # 当前文件路径
@@ -39,73 +36,6 @@ VECTOR_DIM = 384
 BATCH_SIZE = 500
 
 
-<<<<<<< HEAD
-# ============================================
-#
-# def create_indexes(client):
-#     """创建索引"""
-#     print("\n 创建索引...")
-#
-#     # 删除已存在的索引
-#     for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
-#         if client.indices.exists(index=index_name):
-#             print(f"   删除旧索引: {index_name}")
-#             client.indices.delete(index=index_name)
-#
-#     # 商家索引
-#     business_mapping = {
-#         "settings": {
-#             "index": {
-#                 "knn": True,
-#                 "number_of_shards": 1,
-#                 "number_of_replicas": 0
-#             }
-#         },
-#         "mappings": {
-#             "properties": {
-#                 "business_id": {"type": "keyword"},
-#                 "name": {"type": "text"},
-#                 "address": {"type": "text"},
-#                 "city": {"type": "keyword"},
-#                 "state": {"type": "keyword"},
-#                 "postal_code": {"type": "keyword"},
-#                 "location": {"type": "geo_point"},  # 地理坐标点
-#                 "stars": {"type": "float"},
-#                 "review_count": {"type": "integer"},
-#                 "is_open": {"type": "boolean"},
-#                 "attributes": {
-#                     "properties": {
-#                         "RestaurantsTakeOut": {"type": "boolean"},
-#                         "BusinessParking": {
-#                             "properties": {
-#                                 "garage": {"type": "boolean"},
-#                                 "street": {"type": "boolean"},
-#                                 "validated": {"type": "boolean"},
-#                                 "lot": {"type": "boolean"},
-#                                 "valet": {"type": "boolean"}
-#                             }
-#                         }
-#                     }
-#                 },
-#             "categories": {"type": "keyword"},
-#             "hours": {
-#                 "properties": {
-#                     "Monday": {"type": "keyword"},
-#                     "Tuesday": {"type": "keyword"},
-#                     "Wednesday": {"type": "keyword"},
-#                     "Thursday": {"type": "keyword"},
-#                     "Friday": {"type": "keyword"},
-#                     "Saturday": {"type": "keyword"},
-#                     "Sunday": {"type": "keyword"}
-#                 }
-#             }
-#         }
-#     },
-#     }
-#     client.indices.create(index=BUSINESS_INDEX, body=business_mapping)
-#     print(f"创建索引: {BUSINESS_INDEX}")
-#
-=======
 
 
 class ModelSingleton:
@@ -124,7 +54,6 @@ class ModelSingleton:
                     cls._model = SentenceTransformer(cls._model_path)
         return cls._model
 
->>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
 
 def traverse_json(data,prefix="", result=""):
     """
@@ -166,8 +95,6 @@ def create_knn_index(client, index_name):
         print(f"✅ 索引已存在: {index_name}")
         return
 
-<<<<<<< HEAD
-=======
     mapping = {
         "settings": {
             "index": {
@@ -195,7 +122,6 @@ def create_knn_index(client, index_name):
     print(f"✅ 创建 KNN 索引: {index_name}")
 
 
->>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
 def bulk_import(client, file_path, index_name):
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
@@ -203,12 +129,8 @@ def bulk_import(client, file_path, index_name):
     create_knn_index(client, index_name)
 
     # 加载模型
-<<<<<<< HEAD
-    model = SentenceTransformer('../models/all-MiniLM-L6-v2')
-=======
 
     model = ModelSingleton.get_model()
->>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
     total_count = 0
     success_count = 0
     error_count = 0
@@ -228,12 +150,6 @@ def bulk_import(client, file_path, index_name):
                 doc["embedding"] = convert_vector_to_list(embedding)
                 doc["text_for_embedding"] = text_for_embedding
 
-<<<<<<< HEAD
-                # 7. 构建 action
-                action = {
-                    "_index": index_name,
-                    "_id": doc.get("yelp_business"),  # 确保这个字段存在
-=======
                 doc_id = doc.get("business_id")
                 if index_name == BUSINESS_INDEX:
                     doc_id = doc.get("business_id")
@@ -251,7 +167,6 @@ def bulk_import(client, file_path, index_name):
                 action = {
                     "_index": index_name,
                     "_id": doc_id,
->>>>>>> d67454b2da61d2762aa65669e53eda6de3242078
                     "_source": doc
                 }
                 batch_actions.append(action)
@@ -364,8 +279,6 @@ def main():
         return
 
     print(f"\n数据文件检查通过:")
-
-
 
     # 导入商家数据
     bulk_import(
