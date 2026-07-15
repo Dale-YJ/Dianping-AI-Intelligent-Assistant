@@ -87,4 +87,3 @@ if __name__ == "__main__":
     trim_json_file(CHECK_IN_RAW, CHECK_IN_SMALL, 20000)
     trim_json_file(TIP_RAW, TIP_SMALL, 20000)
     trim_json_file(USER_RAW, USER_SMALL, 20000)
-

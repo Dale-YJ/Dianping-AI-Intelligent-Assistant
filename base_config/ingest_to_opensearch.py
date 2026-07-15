@@ -1,10 +1,13 @@
+import ast
+import json
+import os
+import time
+
 import numpy as np
 from opensearchpy import OpenSearch, helpers
 from opensearchpy.helpers import bulk
 from sentence_transformers import SentenceTransformer
-import json
-import os
-import time
+
 from opensearch_client import get_opensearch_client
 import threading
 
@@ -34,7 +37,7 @@ USER_INDEX="yelp_user"
 # 向量维度 (all-MiniLM-L6-v2模型)
 VECTOR_DIM = 384
 
-# 批量处理大小
+# 批量处理大小（小批次避免 OpenSearch 压力过大）
 BATCH_SIZE = 500
 
 
@@ -94,6 +97,31 @@ def convert_vector_to_list(vector):
     return vector
 
 
+def _clean_doc(doc):
+    """修正 Yelp 原始数据类型问题"""
+    # is_open: 0/1 → True/False
+    if "is_open" in doc and isinstance(doc["is_open"], int):
+        doc["is_open"] = bool(doc["is_open"])
+
+    # attributes: "True"/"False" → 布尔值, "{...}" → dict
+    if "attributes" in doc and isinstance(doc["attributes"], dict):
+        for k, v in doc["attributes"].items():
+            if isinstance(v, str):
+                if v in ("True", "False"):
+                    doc["attributes"][k] = (v == "True")
+                elif v.startswith("{") and v.endswith("}"):
+                    try:
+                        doc["attributes"][k] = ast.literal_eval(v)
+                    except (ValueError, SyntaxError):
+                        pass
+
+    # hours: 值统一为字符串
+    if "hours" in doc and isinstance(doc["hours"], dict):
+        for k, v in doc["hours"].items():
+            if not isinstance(v, str):
+                doc["hours"][k] = str(v)
+
+
 def bulk_import(client, file_path, index_name):
     """批量导入数据"""
     print(f"\n 导入数据到 {index_name}")
@@ -106,20 +134,18 @@ def bulk_import(client, file_path, index_name):
     batch_actions = []
     start_time = time.time()
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         for line_num, line in enumerate(f, 1):
             try:
-                #获取每一行的Json数据
                 doc = json.loads(line.strip())
-                # 创建用于向量化的文本
+                _clean_doc(doc)
+
                 text_for_embedding = traverse_json(doc)
-                # 生成向量嵌入
                 embedding = model.encode(text_for_embedding, convert_to_numpy=True)
-                # 将向量添加到文档中
                 doc["embedding"] = convert_vector_to_list(embedding)
                 doc["text_for_embedding"] = text_for_embedding
 
-                # 7. 构建 action
+                doc_id = doc.get("business_id")
                 action = {
                     "_index": index_name,
                     "_id": doc.get("yelp_business"),
@@ -128,48 +154,58 @@ def bulk_import(client, file_path, index_name):
                 batch_actions.append(action)
                 total_count += 1
 
-                # 批量提交
-                if len(batch_actions) >= BATCH_SIZE:
-                    success, errors = bulk(
-                        client,
-                        batch_actions,
-                        chunk_size=BATCH_SIZE
-                    )
-                    success_count += success
-                    error_count += len(errors) if errors else 0
-
+                if total_count % 50 == 0:
                     elapsed = time.time() - start_time
-                    rate = success_count / elapsed if elapsed > 0 else 0
-                    print(
-                        f"   已处理: {total_count}条 | 成功: {success_count} | 失败: {error_count} | 速率: {rate:.1f}条/秒")
+                    rate = total_count / elapsed if elapsed > 0 else 0
+                    print(f"   已生成 embedding: {total_count} 条 | 速率: {rate:.1f} 条/秒")
 
+                if len(batch_actions) >= BATCH_SIZE:
+                    ok, err = _send_batch(client, batch_actions, total_count)
+                    success_count += ok
+                    error_count += err
                     batch_actions = []
 
             except json.JSONDecodeError as e:
-                print(f"   第{line_num}行JSON解析错误: {e}")
+                print(f"   第{line_num}行 JSON 解析错误: {e}")
                 error_count += 1
-                continue
             except Exception as e:
-                print(f"   处理第{line_num}行时出错: {e}")
+                print(f"   第{line_num}行处理出错: {e}")
                 error_count += 1
-                continue
 
-        # 处理剩余的数据
         if batch_actions:
-            success, errors = bulk(
-                client,
-                batch_actions,
-            )
-            success_count += success
-            error_count += len(errors) if errors else 0
+            ok, err = _send_batch(client, batch_actions, total_count)
+            success_count += ok
+            error_count += err
 
     elapsed = time.time() - start_time
-    print(f"\n✅ {index_name} 导入完成!")
-    print(f"   总处理: {total_count}条")
-    print(f"   成功: {success_count}条")
-    print(f"   失败: {error_count}条")
-    print(f"   耗时: {elapsed:.1f}秒")
-    print(f"   平均速度: {success_count / elapsed:.1f}条/秒")
+    print(f"\n[OK] {index_name} 导入完成!")
+    print(f"   总处理: {total_count}条 | 成功: {success_count} | 失败: {error_count}")
+    print(f"   耗时: {elapsed:.1f}秒", end="")
+    if elapsed > 0:
+        print(f" | 平均: {total_count / elapsed:.1f}条/秒")
+    else:
+        print()
+
+
+def _send_batch(client, batch, total_count):
+    """发送一批数据到 OpenSearch，返回 (成功数, 失败数)"""
+    n = len(batch)
+    print(f"   >>> 发送 {total_count - n + 1}~{total_count} 条 ...", end="", flush=True)
+    t0 = time.time()
+    try:
+        result = bulk(
+            client, batch,
+            chunk_size=BATCH_SIZE,
+            request_timeout=REQUEST_TIMEOUT,
+            raise_on_error=False,
+        )
+        ok_cnt = result[0]
+        err_cnt = len(result[1]) if result[1] else 0
+        print(f" 完成 ({time.time() - t0:.1f}s) 成功: {ok_cnt}, 失败: {err_cnt}")
+        return ok_cnt, err_cnt
+    except Exception as e:
+        print(f" 失败 ({time.time() - t0:.1f}s)\n   [ERROR] {e}")
+        return 0, n
 
 
 def verify_data(client):
