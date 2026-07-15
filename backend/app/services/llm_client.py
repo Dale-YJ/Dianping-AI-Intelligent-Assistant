@@ -25,8 +25,11 @@ _lock = threading.Lock()
 
 
 def _get_settings():
-    """Lazy-import settings so the module can also run standalone."""
-    from ..core.config import settings
+    """Lazy-import settings — tries relative first, absolute as fallback."""
+    try:
+        from ..core.config import settings
+    except ImportError:
+        from app.core.config import settings
     return settings
 
 
