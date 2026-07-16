@@ -44,13 +44,14 @@ class RedisManager:
 
     @asynccontextmanager
     async def get_client(self):
-        if self._client is None:
-            await self.initialize()
-        try:
-            yield self._client
-        except Exception as e:
-            # Log error here if needed
-            raise
+        async with self._init_lock:
+            if self._client is None:
+                await self.initialize()
+            try:
+                yield self._client
+            except Exception as e:
+                # Log error here if needed
+                raise
 
 # 全局实例
 redis_manager = RedisManager()
