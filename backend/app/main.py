@@ -7,14 +7,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from app.core.config import settings
+from backend.app.core.config import settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown."""
     # Pre-load embedding model on startup (avoid lazy-init delay on first request)
-    from app.services.chat_services.search_service import _get_embedding_model as _preload_embedding
+    from backend.app.services.chat_services.search_service import _get_embedding_model as _preload_embedding
     _preload_embedding()
     yield
 
