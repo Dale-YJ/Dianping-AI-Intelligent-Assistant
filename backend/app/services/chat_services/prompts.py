@@ -8,7 +8,27 @@ extract structured search requirements from the conversation.
 
 from __future__ import annotations
 
-from .search_service import search_reviews_for_business
+# 统一使用 base_config 的 OpenSearch 客户端
+from opensearch_client import get_opensearch_client
+
+REVIEW_INDEX = "yelp_review"
+
+
+def _fetch_reviews(business_id: str, top_k: int = 3) -> list[dict]:
+    """按 business_id 查评价，按 useful 降序。"""
+    client = get_opensearch_client()
+    if not client.indices.exists(index=REVIEW_INDEX):
+        return []
+    body = {
+        "size": top_k,
+        "query": {"bool": {"must": [{"term": {"business_id": business_id}}]}},
+        "sort": [{"useful": {"order": "desc"}}],
+    }
+    try:
+        resp = client.search(index=REVIEW_INDEX, body=body)
+    except Exception:
+        return []
+    return [h["_source"] for h in resp.get("hits", {}).get("hits", [])]
 
 # ═══════════════════════════════════════════════════════════════
 # System Prompts
@@ -120,7 +140,7 @@ def build_context(businesses: list[dict]) -> str:
         # Attach top reviews for this business
         biz_id = biz.get("business_id", "")
         if biz_id:
-            reviews = search_reviews_for_business(biz_id, top_k=3)
+            reviews = _fetch_reviews(biz_id, top_k=3)
             if reviews:
                 parts.append("    精选评价:")
                 for r in reviews:

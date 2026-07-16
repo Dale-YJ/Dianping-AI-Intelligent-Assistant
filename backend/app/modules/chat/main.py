@@ -14,8 +14,8 @@ from backend.app.core.config import settings
 async def lifespan(app: FastAPI):
     """Startup / shutdown."""
     # Pre-load embedding model on startup (avoid lazy-init delay on first request)
-    from backend.app.services.chat_services.search_service import _get_embedding_model as _preload_embedding
-    _preload_embedding()
+    from retrieve import embed_query as _preload_embed_query
+    _preload_embed_query("")  # trigger ModelSingleton init
     yield
 
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 from langchain_openai import ChatOpenAI
-from backend.app.core.config import settings
+from app.core.config import settings
 
 # ── Global singleton ───────────────────────────────────────
 _llm_client: ChatOpenAI | None = None

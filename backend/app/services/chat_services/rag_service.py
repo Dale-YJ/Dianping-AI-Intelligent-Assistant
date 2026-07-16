@@ -24,7 +24,36 @@ from .prompts import (
     build_context,
     build_user_prompt,
 )
-from .search_service import search_businesses, search_reviews_for_business
+
+# 统一使用 base_config 的 OpenSearch 客户端和检索接口
+from opensearch_client import get_opensearch_client
+from retrieve import hybrid_search
+
+BUSINESS_INDEX = "yelp_business"
+REVIEW_INDEX = "yelp_review"
+
+
+def _search_businesses(query: str, top_k: int = 5, min_score: float = 0.3) -> list[dict]:
+    """混合搜索商家，底层调 retrieve.hybrid_search，加 min_score 截断。"""
+    results = hybrid_search(query, k=max(top_k * 2, 10), index_name=BUSINESS_INDEX)
+    return [r for r in results if r.get("_score", 0) >= min_score][:top_k]
+
+
+def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
+    """按 business_id 查评价，按 useful 降序。"""
+    client = get_opensearch_client()
+    if not client.indices.exists(index=REVIEW_INDEX):
+        return []
+    body = {
+        "size": top_k,
+        "query": {"bool": {"must": [{"term": {"business_id": business_id}}]}},
+        "sort": [{"useful": {"order": "desc"}}],
+    }
+    try:
+        resp = client.search(index=REVIEW_INDEX, body=body)
+    except Exception:
+        return []
+    return [h["_source"] for h in resp.get("hits", {}).get("hits", [])]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -60,7 +89,7 @@ async def rag_stream(
     add_message(conv_id, "user", query)
 
     # 3. search
-    businesses = search_businesses(query)
+    businesses = _search_businesses(query)
 
     # 4. no search results → let LLM chat naturally (handles greetings, small talk)
     if not businesses:
@@ -140,7 +169,7 @@ async def rag_generate(
     conv_id = get_or_create_conversation(conversation_id)
 
     # search
-    businesses = search_businesses(query)
+    businesses = _search_businesses(query)
 
     if not businesses:
         history = get_history(conv_id)
@@ -209,7 +238,7 @@ def _build_recommendations(
     items: list[RecommendationItem] = []
     for biz in businesses[:5]:
         biz_id = biz.get("business_id", "")
-        reviews = search_reviews_for_business(biz_id, top_k=3)
+        reviews = _search_reviews(biz_id, top_k=3)
 
         sources: list[SourceInfo] = []
         for r in reviews:
