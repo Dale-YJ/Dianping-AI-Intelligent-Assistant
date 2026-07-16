@@ -11,26 +11,16 @@ Usage::
 The returned client is an ``openai.AsyncOpenAI`` instance, suitable for both
 streaming and non-streaming calls.
 """
-
 from __future__ import annotations
-
 import threading
 from typing import Any
-
-from openai import AsyncOpenAI
+from langchain_openai import ChatOpenAI
+from backend.app.core.config import settings
 
 # ── Global singleton ───────────────────────────────────────
-_llm_client: AsyncOpenAI | None = None
+_llm_client: ChatOpenAI | None = None
 _lock = threading.Lock()
 
-
-def _get_settings():
-    """Lazy-import settings — tries relative first, absolute as fallback."""
-    try:
-        from ..core.config import settings
-    except ImportError:
-        from app.core.config import settings
-    return settings
 
 
 def get_llm(
@@ -38,34 +28,8 @@ def get_llm(
     base_url: str | None = None,
     model: str | None = None,
     **kwargs: Any,
-) -> AsyncOpenAI:
-    """Return a thread-safe singleton ``AsyncOpenAI`` client.
+) -> ChatOpenAI:
 
-    On first call the client is created from ``settings``; subsequent calls
-    return the cached instance.  Pass explicit arguments to override defaults
-    (the override only takes effect on the *first* call — afterwards the
-    singleton is locked).
-
-    Parameters
-    ----------
-    api_key:
-        API key forwarded to OpenAI-compatible providers.
-        Defaults to ``settings.api_key``.
-    base_url:
-        Base URL of the LLM gateway.
-        Defaults to ``settings.base_url``.
-    model:
-        Convenience parameter stored on the returned client as
-        ``client._model_name`` so callers can read it back.
-        Defaults to ``settings.llm_model``.
-    **kwargs:
-        Extra keyword arguments passed through to ``AsyncOpenAI.__init__``.
-
-    Returns
-    -------
-    AsyncOpenAI
-        The shared LLM client instance.
-    """
     global _llm_client
 
     if _llm_client is not None:
@@ -75,21 +39,17 @@ def get_llm(
         if _llm_client is not None:
             return _llm_client
 
-        settings = _get_settings()
-
         resolved_api_key = api_key if api_key is not None else settings.api_key
         resolved_base_url = base_url if base_url is not None else settings.base_url
+        resolved_model = model if model is not None else settings.llm_model
 
-        _llm_client = AsyncOpenAI(
+        _llm_client = ChatOpenAI(
             api_key=resolved_api_key,
             base_url=resolved_base_url,
+            model=resolved_model,
             **kwargs,
         )
-        # Attach model name for convenience
-        _llm_client._model_name = model if model is not None else settings.llm_model  # type: ignore[attr-defined]
-
     return _llm_client
-
 
 def reset_llm() -> None:
     """Reset the cached LLM client (useful for tests or config reloads)."""
@@ -100,21 +60,12 @@ def reset_llm() -> None:
 
 # ── Self-test (run directly: python llm_client.py) ─────────
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-
-    # Ensure backend/ is on sys.path so `app.core.config` can be resolved
-    _backend_dir = Path(__file__).resolve().parent.parent.parent
-    if str(_backend_dir) not in sys.path:
-        sys.path.insert(0, str(_backend_dir))
 
     print("=== LLM Client 自检 ===\n")
-
     llm = get_llm()
-    model = getattr(llm, "_model_name", "unknown")
-    print(f"  base_url : {llm.base_url}")
-    print(f"  model    : {model}")
-    print(f"  api_key  : {llm.api_key[:8]}...{llm.api_key[-4:] if llm.api_key else '(empty)'}")
+
+    res = llm.invoke("hello ,please introduce yourself,include your model name,base_url,")
+    print(res.content)
 
     # singleton test
     llm2 = get_llm()

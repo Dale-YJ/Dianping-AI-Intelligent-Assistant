@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 PROJECT_ROOT = BACKEND_ROOT.parent
 
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
@@ -18,19 +17,24 @@ class Settings(BaseSettings):
     # ── LLM ──────────────────────────────────────────────
     api_key: str = Field(default="", alias="OPENAI_API_KEY")
     base_url: str = Field(default="", alias="OPENAI_BASE_URL")
-    llm_model: str = "deepseek-chat"
+    llm_model: str = Field(default="", alias="LLM_MODEL")
 
     # ── OpenSearch ───────────────────────────────────────
-    opensearch_host: str = "localhost"
-    opensearch_port: int = 9200
-    opensearch_user: str = "admin"
-    opensearch_password: str = "admin"
-    opensearch_use_ssl: bool = False
+    opensearch_host: str
+    opensearch_port: int
+    opensearch_user: str
+    opensearch_password:str
+    opensearch_use_ssl: bool = True
+
+    #索引
     business_index: str = "yelp_business"
     review_index: str = "yelp_review"
+    tip_index: str = "yelp_tip"
+    user_index: str = "yelp_user"
+    checkin_index: str = "yelp_checkin"
 
     # ── Embedding ────────────────────────────────────────
-    embedding_model_path: str = "../models/all-MiniLM-L6-v2"
+    embedding_model_path: str = "models/all-MiniLM-L6-v2"
 
     # ── RAG ──────────────────────────────────────────────
     top_k: int = 5                    # number of businesses to retrieve
@@ -47,7 +51,7 @@ class Settings(BaseSettings):
         p = Path(self.embedding_model_path)
         if p.is_absolute():
             return str(p)
-        return str((BACKEND_ROOT / p).resolve())
+        return str((PROJECT_ROOT / p).resolve())
 
 
 settings = Settings()
