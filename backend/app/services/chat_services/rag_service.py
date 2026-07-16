@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from typing import AsyncIterator
 
-from backend.app.core.config import settings
 from backend.app.schemas.chat_schemas.schemas import RecommendationItem, SourceInfo
 from .conversation import (
     add_message,
@@ -21,7 +20,6 @@ from .conversation import (
 )
 from backend.app.services.llm_client import get_llm
 from .prompts import (
-    FALLBACK_MESSAGE,
     SYSTEM_PROMPT,
     build_context,
     build_user_prompt,
@@ -64,13 +62,27 @@ async def rag_stream(
     # 3. search
     businesses = search_businesses(query)
 
-    # 4. fallback if no results
+    # 4. no search results → let LLM chat naturally (handles greetings, small talk)
     if not businesses:
-        fallback_text = FALLBACK_MESSAGE.format(query=query)
-        add_message(conv_id, "assistant", fallback_text)
-        yield _sse("delta", {"content": fallback_text})
+        history = get_history(conv_id)
+        chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for m in history[-6:]:
+            chat_messages.append({"role": m["role"], "content": m["content"]})
+
+        llm = get_llm()
+        full_response = ""
+        try:
+            async for chunk in llm.astream(chat_messages):
+                if chunk.content:
+                    full_response += chunk.content
+                    yield _sse("delta", {"content": chunk.content})
+        except Exception:
+            full_response = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
+            yield _sse("delta", {"content": full_response})
+
+        add_message(conv_id, "assistant", full_response)
         yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
-        yield _sse("done", {"total_tokens": 0})
+        yield _sse("done", {"total_tokens": len(full_response)})
         return
 
     # 5. build context & prompt
@@ -86,22 +98,14 @@ async def rag_stream(
     full_response = ""
 
     try:
-        stream = await llm.chat.completions.create(
-            model=getattr(llm, "_model_name", settings.llm_model),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            max_tokens=1024,
-            stream=True,
-        )
-
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta and delta.content:
-                full_response += delta.content
-                yield _sse("delta", {"content": delta.content})
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        async for chunk in llm.astream(messages):
+            if chunk.content:
+                full_response += chunk.content
+                yield _sse("delta", {"content": chunk.content})
 
     except Exception as e:
         error_msg = f"抱歉，AI 服务暂时不可用，请稍后重试。({e})"
@@ -139,8 +143,18 @@ async def rag_generate(
     businesses = search_businesses(query)
 
     if not businesses:
-        text = FALLBACK_MESSAGE.format(query=query)
+        history = get_history(conv_id)
+        chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for m in history[-6:]:
+            chat_messages.append({"role": m["role"], "content": m["content"]})
+
         add_message(conv_id, "user", query)
+        llm = get_llm()
+        try:
+            resp = await llm.ainvoke(chat_messages)
+            text = resp.content or ""
+        except Exception:
+            text = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
         add_message(conv_id, "assistant", text)
         return conv_id, text, []
 
@@ -153,16 +167,12 @@ async def rag_generate(
 
     llm = get_llm()
     try:
-        resp = await llm.chat.completions.create(
-            model=getattr(llm, "_model_name", settings.llm_model),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            max_tokens=1024,
-        )
-        text = resp.choices[0].message.content or ""
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        resp = await llm.ainvoke(messages)
+        text = resp.content or ""
     except Exception as e:
         text = f"抱歉，AI 服务暂时不可用: {e}"
 
