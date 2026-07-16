@@ -8,3 +8,4 @@ models
 .env
 base_config/ingest_to_opensearch.py
 base_config/clear_indices.py
+backend/app/core/config.py
