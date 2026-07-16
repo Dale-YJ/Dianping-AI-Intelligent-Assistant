@@ -39,6 +39,7 @@ def get_llm(
         if _llm_client is not None:
             return _llm_client
 
+
         resolved_api_key = api_key if api_key is not None else settings.api_key
         resolved_base_url = base_url if base_url is not None else settings.base_url
         resolved_model = model if model is not None else settings.llm_model
