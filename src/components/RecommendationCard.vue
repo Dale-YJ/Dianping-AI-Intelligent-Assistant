@@ -7,7 +7,9 @@
       <div class="rec-info">
         <h3 class="rec-name">{{ name }}</h3>
         <div class="rec-rating">
-          <span class="stars">{{ '★'.repeat(Math.floor(rating)) }}{{ rating % 1 ? '½' : '' }}</span>
+          <span class="stars">
+            <span v-for="i in 5" :key="i" class="star" :class="starClass(i)">{{ starChar(i) }}</span>
+          </span>
           <span class="rating-num">{{ rating }}</span>
         </div>
         <div class="rec-meta">
@@ -46,7 +48,23 @@ export default {
     imgBg: { type: String, default: 'linear-gradient(135deg, #3D2E2E, #5D3A3A)' },
     rank: { type: Number, default: 0 }
   },
-  emits: ['click', 'source-click']
+  emits: ['click', 'source-click'],
+  methods: {
+    starClass(i) {
+      const full = Math.floor(this.rating)
+      const half = this.rating % 1 >= 0.5 ? 1 : 0
+      if (i <= full) return 'star-full'
+      if (i === full + 1 && half) return 'star-half'
+      return 'star-empty'
+    },
+    starChar(i) {
+      const full = Math.floor(this.rating)
+      const half = this.rating % 1 >= 0.5 ? 1 : 0
+      if (i <= full) return '★'
+      if (i === full + 1 && half) return '★'
+      return '☆'
+    }
+  }
 }
 </script>
 
@@ -100,7 +118,21 @@ export default {
   text-overflow: ellipsis;
 }
 .rec-rating { display: flex; align-items: center; gap: var(--space-1); margin-bottom: 2px; }
-.stars { color: var(--amber); font-size: var(--text-sm); letter-spacing: 1px; }
+.stars { font-size: var(--text-sm); letter-spacing: 1px; display: inline-flex; align-items: center; }
+.star { display: inline-block; position: relative; }
+.star-full { color: var(--amber); }
+.star-empty { color: #DDD; }
+.star-half { color: #DDD; }
+.star-half::after {
+  content: '★';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50%;
+  overflow: hidden;
+  color: var(--amber);
+  pointer-events: none;
+}
 .rating-num { font-size: var(--text-sm); font-weight: 600; color: var(--ink); }
 .rec-meta { font-size: var(--text-xs); color: var(--ink-muted); }
 .rec-reason {

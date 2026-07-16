@@ -1,96 +1,60 @@
 /**
  * 模块 D：数据管理
  * ==================
+ * ⚠️ 后端尚未实现管理接口，当前返回占位数据。
  * 对应接口文档 五、模块 D
- * - POST /admin/data/import   数据导入（异步）
- * - POST /admin/data/process  数据处理/向量化（异步）
- * - GET  /admin/tasks/{id}    异步任务状态查询
- * - GET  /admin/stats         数据统计总览
  */
 
-import { post, get } from '../client.js'
+function warn(name) {
+  console.warn(`[API] ${name} 后端尚未实现`)
+}
 
 /* ───────── D.1 数据导入 ───────── */
-
-/**
- * 从 Yelp Dataset 筛选并导入数据到系统。
- *
- * @param {object}   params
- * @param {string}   params.datasetPath             - Yelp Dataset 解压后的目录路径
- * @param {string}   params.city                    - 目标城市
- * @param {string[]} [params.categoriesFilter]      - 类型筛选，默认 ["Restaurants", "Food"]
- * @param {number}   [params.minReviewsPerBusiness] - 商家最少评价数，默认 1
- * @returns {Promise<{ task_id: string, status: string, created_at: string }>}
- */
 export function postDataImport({
   datasetPath,
   city,
   categoriesFilter,
   minReviewsPerBusiness,
-}) {
-  return post('/admin/data/import', {
-    dataset_path: datasetPath,
-    city,
-    categories_filter: categoriesFilter,
-    min_reviews_per_business: minReviewsPerBusiness,
-  })
+} = {}) {
+  warn('postDataImport')
+  return Promise.resolve({ task_id: 'stub_import', status: 'pending' })
 }
 
 /* ───────── D.2 数据处理（向量化） ───────── */
-
-/**
- * 启动内容处理 Pipeline：清洗 → 语义切分 → 向量化 → 入库 OpenSearch。
- *
- * @param {object} [params]
- * @param {number} [params.chunkSize=512]       - Chunk 大小（tokens）
- * @param {number} [params.chunkOverlap=64]      - Chunk 重叠（tokens）
- * @param {string} [params.embeddingModel]       - 向量化模型，默认 deepseek
- * @param {object} [params.indexNames]           - OpenSearch 索引名配置
- * @returns {Promise<{ task_id: string, status: string, created_at: string }>}
- */
 export function postDataProcess({
   chunkSize = 512,
   chunkOverlap = 64,
   embeddingModel,
   indexNames,
 } = {}) {
-  return post('/admin/data/process', {
-    chunk_size: chunkSize,
-    chunk_overlap: chunkOverlap,
-    embedding_model: embeddingModel,
-    index_names: indexNames,
-  })
+  warn('postDataProcess')
+  return Promise.resolve({ task_id: 'stub_process', status: 'pending' })
 }
 
 /* ───────── D.3 任务状态查询 ───────── */
-
-/**
- * 查询异步任务（数据导入 / 处理）的进度和结果。
- *
- * @param {string} taskId
- * @returns {Promise<{
- *   task_id: string, type: string,
- *   status: 'pending' | 'processing' | 'completed' | 'failed',
- *   progress: { phase: string, current: number, total: number, percentage: number },
- *   result: object|null,
- *   created_at: string, updated_at: string
- * }>}
- */
 export function getTaskStatus(taskId) {
-  return get(`/admin/tasks/${taskId}`)
+  warn('getTaskStatus')
+  return Promise.resolve({
+    task_id: taskId,
+    type: 'unknown',
+    status: 'pending',
+    progress: { phase: '', current: 0, total: 0, percentage: 0 },
+    result: null,
+    created_at: '',
+    updated_at: '',
+  })
 }
 
 /* ───────── D.4 数据统计总览 ───────── */
-
-/**
- * 获取系统知识库的整体统计信息。
- *
- * @returns {Promise<{
- *   total_businesses: number, total_reviews: number, total_chunks: number,
- *   avg_review_length: number,
- *   last_import_at: string, last_process_at: string, index_status: string
- * }>}
- */
 export function getAdminStats() {
-  return get('/admin/stats')
+  warn('getAdminStats')
+  return Promise.resolve({
+    total_businesses: 0,
+    total_reviews: 0,
+    total_chunks: 0,
+    avg_review_length: 0,
+    last_import_at: '',
+    last_process_at: '',
+    index_status: 'not_initialized',
+  })
 }

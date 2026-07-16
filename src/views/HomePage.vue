@@ -38,23 +38,16 @@
             {{ msg.text }}
           </ChatBubble>
 
-          <!-- AI thinking -->
-          <ChatBubble role="ai" v-else-if="msg.role === 'thinking'">
-            <span class="typing-dot"></span>
-            <span class="typing-dot"></span>
-            <span class="typing-dot"></span>
-          </ChatBubble>
-
           <!-- AI response -->
           <ChatBubble role="ai" :time="msg.time" v-else-if="msg.role === 'ai'">
             <p class="ai-intro" v-if="msg.intro">{{ msg.intro }}</p>
-            <div class="rec-list" v-if="msg.recs && msg.recs.length">
+            <div class="rec-list" v-if="msg.recs && msg.recs.length && !isDesktop">
               <RecommendationCard
                 v-for="(rec, j) in msg.recs"
                 :key="j"
                 v-bind="rec"
                 :style="{ animationDelay: (j * 0.1) + 's' }"
-                @click="goToShop(rec.id)"
+                @click="goToShop(rec)"
                 @source-click="s => showSource(s)"
               />
             </div>
@@ -105,9 +98,12 @@
               <div>
                 <strong>{{ selectedSource.user }}</strong>
                 <span class="source-date">{{ selectedSource.date }}</span>
+                <span class="source-biz" v-if="selectedSource.businessName">@{{ selectedSource.businessName }}</span>
               </div>
             </div>
-            <div class="source-stars">{{ '★'.repeat(selectedSource.stars || 4) }}{{ '☆'.repeat(5 - (selectedSource.stars || 4)) }}</div>
+            <div class="source-stars">
+              <span v-for="i in 5" :key="i" class="star" :class="sourceStarClass(i)">{{ sourceStarChar(i) }}</span>
+            </div>
             <p class="source-full-text">{{ selectedSource.fullText || selectedSource.snippet }}</p>
           </div>
         </div>
@@ -121,7 +117,9 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ChatInput from '../components/ChatInput.vue'
 import ChatBubble from '../components/ChatBubble.vue'
 import RecommendationCard from '../components/RecommendationCard.vue'
-import { postRecommend, getQuickTags } from '../api/modules/chat.js'
+import { postChatSend } from '../api/modules/chat.js'
+import { sharedStore } from '../stores/sharedData.js'
+import { useTranslate } from '../composables/useTranslate.js'
 
 /* ─── 推荐数据映射: API → 组件 props ─── */
 const IMG_GRADIENTS = [
@@ -150,17 +148,70 @@ function mapRecommendation(apiRec) {
     price: '--',
     distance: '--',
     reason: apiRec.reason,
-    tags: apiRec.tags || [],
+    reviewCount: apiRec.review_count || 0,
+    address: apiRec.address || '',
+    city: apiRec.city || '',
+    score: apiRec.score || 0,
     imgBg: hashGradient(apiRec.business_id || apiRec.name),
-    sources: (apiRec.sources || []).map(s => ({
+    sources: (apiRec.sources || []).map((s, i) => ({
       user: s.user_name,
       date: s.date,
-      snippet: s.snippet,
-      fullText: s.snippet,
+      snippet: s.text,
+      fullText: s.text,
       stars: s.rating,
-      reviewId: s.review_id,
+      reviewId: `src_${i}`,
+      businessName: s.business_name || '',
     })),
   }
+}
+
+/**
+ * 非餐饮类关键词 — 用于前端过滤明显不相关的商家（如理发店、修车行等）。
+ * 后端 embedding 模型仅支持英文 + similarity_threshold 过低，
+ * 导致不相关结果通过。前端做最后一道防线。
+ */
+const NON_FOOD_WORDS = /\b(barber|hair\s*cut|hair\s*styl|salon|spa|nail\s|massage|gym|fitness|yoga|auto\s|car\s|gas\s|laundry|dry\s*clean|dentist|doctor|hospital|pharmacy|vet\s|pet\s|bank|atm|insurance|real\s*estate|lawyer|plumber|electric|storage|moving|shipping|hardware|jewelry|watch|clothing|shoe|tailor|tobacco|vape|cannabis|liquor|cleaner|carpet|glass|roofing|pest\s)\b/i
+
+function isFoodBusiness(rec) {
+  const cats = (rec.categories || '').toLowerCase()
+  // 命中了非餐饮关键词 → 过滤掉
+  return !NON_FOOD_WORDS.test(cats)
+}
+
+/**
+ * 过滤推荐结果：去重 + 分数断崖 + 非餐饮排除。
+ */
+function filterRecommendations(recs) {
+  if (!recs || !recs.length) return []
+
+  // 0. 按 business_id 去重（保留分数最高的那条）
+  const seen = new Set()
+  const deduped = []
+  for (const r of recs) {
+    const id = r.id || r.business_id
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    deduped.push(r)
+  }
+
+  // 按分数降序
+  const sorted = [...deduped].sort((a, b) => (b.score || 0) - (a.score || 0))
+
+  // 1. 检测分数断崖 — 相邻落差 > 30% 则截断
+  const cutoff = []
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === 0) {
+      cutoff.push(sorted[i])
+      continue
+    }
+    const prevScore = sorted[i - 1].score || 0
+    const curScore = sorted[i].score || 0
+    if (prevScore > 0 && curScore / prevScore < 0.7) break
+    cutoff.push(sorted[i])
+  }
+
+  // 2. 排除非餐饮类
+  return cutoff.filter(isFoodBusiness)
 }
 
 /** dev mock 回退数据 */
@@ -183,7 +234,8 @@ export default {
     /* ─── 响应式状态 ─── */
     const messages = ref([])
     const isThinking = ref(false)
-    const sessionId = ref(tryLoadSession())
+    const { translate, isTranslating } = useTranslate()
+    const conversationId = ref(tryLoadConversation())
     const selectedSource = ref(null)
     const isDesktop = ref(false)
     const quickQueries = ref([
@@ -213,57 +265,50 @@ export default {
         if (end) end.lastElementChild?.scrollIntoView({ behavior: 'smooth' })
       })
     }
-    function tryLoadSession() {
-      try { return sessionStorage.getItem('dp_ai_session_id') || null } catch { return null }
+    function tryLoadConversation() {
+      try { return sessionStorage.getItem('dp_ai_conversation_id') || null } catch { return null }
     }
-    function saveSession(id) {
-      try { sessionStorage.setItem('dp_ai_session_id', id) } catch {}
+    function saveConversation(id) {
+      try { sessionStorage.setItem('dp_ai_conversation_id', id) } catch {}
     }
 
-    /* ─── 发送消息（真实 API + dev mock 回退） ─── */
+    /* ─── 发送消息（翻译 → RAG → LLM） ─── */
     async function sendMessage(text) {
       if (!text.trim() || isThinking.value) return
 
       const t = timeStr()
-      messages.value.push({ role: 'user', text: text.trim(), time: t })
+      const rawText = text.trim()
+
+      messages.value.push({ role: 'user', text: rawText, time: t })
       scrollDown()
 
       isThinking.value = true
-      messages.value.push({ role: 'thinking', time: '' })
-      scrollDown()
 
       try {
-        const data = await postRecommend({
-          query: text.trim(),
-          sessionId: sessionId.value,
-          topK: 5,
-        })
+        // 翻译中文 → 英文（解决 embedding 仅支持英文的问题）
+        const enQuery = await translate(rawText)
 
-        if (data.session_id) {
-          sessionId.value = data.session_id
-          saveSession(data.session_id)
+        // 发送英文查询到 RAG 链路
+        const data = await postChatSend(enQuery, conversationId.value)
+
+        if (data.conversation_id) {
+          conversationId.value = data.conversation_id
+          saveConversation(data.conversation_id)
         }
 
-        messages.value.pop()
+        const wasTranslated = enQuery !== rawText
+
         messages.value.push({
           role: 'ai',
-          intro: data.answer,
-          recs: (data.recommendations || []).map(mapRecommendation),
-          fallback: '',
+          intro: data.is_fallback ? '' : data.text,
+          recs: filterRecommendations((data.recommendations || []).map(mapRecommendation)),
+          fallback: data.is_fallback ? data.text : '',
+          translated: wasTranslated,
+          enQuery: wasTranslated ? enQuery : undefined,
           time: timeStr(),
         })
       } catch (err) {
-        messages.value.pop()
-
-        // 兜底 code 1001 — API 返回了 alternatives
-        if (err.code === 1001 && err.data) {
-          messages.value.push({
-            role: 'ai', intro: '', recs: [],
-            fallback: err.data.answer || err.message,
-            time: timeStr(),
-          })
-        } else if (import.meta.env.DEV) {
-          // 开发环境 mock 回退
+        if (import.meta.env.DEV) {
           console.warn('[DEV] API 不可用，使用 mock 数据:', err.message)
           await new Promise(r => setTimeout(r, 400 + Math.random() * 400))
           messages.value.push({
@@ -289,28 +334,59 @@ export default {
     /* ─── 其他操作 ─── */
     function clearChat() { messages.value = [] }
     function showSource(s) { selectedSource.value = s }
-    function goToShop(id) {
-      const detailId = typeof id === 'string' ? id : String(id)
-      this.$router.push(`/detail/${detailId}`)
+    function goToShop(rec) {
+      // 将推荐数据存入共享 store，供详情页/商家后台使用
+      if (rec && typeof rec === 'object') {
+        sharedStore.setBusiness({
+          business_id: rec.id || rec.business_id,
+          name: rec.name,
+          rating: rec.rating,
+          review_count: rec.reviewCount || rec.review_count || 0,
+          categories: typeof rec.categories === 'string'
+            ? rec.categories.split(' · ')
+            : (rec.categories || []),
+          address: rec.address || '',
+          city: rec.city || '',
+          state: rec.state || '',
+          sources: rec.sources || [],
+          imgBg: rec.imgBg || '',
+          reason: rec.reason || '',
+          price: rec.price || '--',
+        })
+      }
+      const detailId = rec?.id || rec?.business_id || rec
+      if (detailId && typeof detailId === 'string') {
+        this.$router.push(`/detail/${encodeURIComponent(detailId)}`)
+      }
     }
 
-    /* ─── 加载快捷标签 ─── */
-    async function loadQuickTags() {
-      try {
-        const tags = await getQuickTags()
-        if (tags && tags.length) quickQueries.value = tags.map(t => t.text)
-      } catch { /* 后端未就绪，保留默认 */ }
+    /* ─── 星级评分辅助 ─── */
+    function sourceStarClass(i) {
+      const stars = selectedSource.value?.stars || 0
+      const full = Math.floor(stars)
+      const half = stars % 1 >= 0.5 ? 1 : 0
+      if (i <= full) return 'star-full'
+      if (i === full + 1 && half) return 'star-half'
+      return 'star-empty'
+    }
+    function sourceStarChar(i) {
+      const stars = selectedSource.value?.stars || 0
+      const full = Math.floor(stars)
+      const half = stars % 1 >= 0.5 ? 1 : 0
+      if (i <= full) return '★'
+      if (i === full + 1 && half) return '★'
+      return '☆'
     }
 
     /* ─── 响应式断点 ─── */
     function onResize() { isDesktop.value = window.innerWidth >= 1024 }
-    onMounted(() => { onResize(); window.addEventListener('resize', onResize); loadQuickTags() })
+    onMounted(() => { onResize(); window.addEventListener('resize', onResize) })
     onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
     return {
-      messages, isThinking, sessionId,
+      messages, isThinking, isTranslating, conversationId,
       selectedSource, isDesktop, quickQueries, latestRecs,
-      sendMessage, clearChat, showSource, goToShop,
+      sendMessage, clearChat, showSource, goToShop, sourceStarClass, sourceStarChar,
     }
   },
 }
@@ -501,6 +577,20 @@ export default {
 }
 .source-date { display: block; font-size: var(--text-xs); color: var(--ink-muted); }
 .source-stars { color: var(--amber); font-size: var(--text-sm); margin-bottom: var(--space-3); }
+.source-stars .star { display: inline-block; position: relative; }
+.source-stars .star-full { color: var(--amber); }
+.source-stars .star-empty { color: #DDD; }
+.source-stars .star-half { color: #DDD; }
+.source-stars .star-half::after {
+  content: '★';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50%;
+  overflow: hidden;
+  color: var(--amber);
+  pointer-events: none;
+}
 .source-full-text { font-size: var(--text-base); line-height: var(--leading-relaxed); color: var(--ink-light); }
 
 /* ── Responsive ── */

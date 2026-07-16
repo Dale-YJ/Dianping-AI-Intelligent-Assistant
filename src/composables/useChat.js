@@ -1,37 +1,34 @@
 /**
  * useChat — 聊天会话管理
  * ========================
- * 封装 HomePage 的对话逻辑：消息列表、发送消息、思考状态、session 持久化。
+ * 封装 HomePage 的对话逻辑：消息列表、发送消息、思考状态、会话持久化。
+ * 内置中文→英文翻译层，解决 embedding 模型仅支持英文的问题。
  *
  * 用法：
  *   const { messages, isThinking, sendMessage, clearChat, latestRecs } = useChat()
  *   await sendMessage('附近有什么好吃的川菜？')
- *
- * 兜底处理：
- *   code 1001 → 展示兜底文案 + alternatives
- *   网络错误  → 展示错误提示
  */
 
 import { ref } from 'vue'
-import { postRecommend } from '../api/modules/chat.js'
-import { ApiError } from '../api/client.js'
+import { postChatSend } from '../api/modules/chat.js'
+import { useTranslate } from './useTranslate.js'
 
-const SESSION_KEY = 'dp_ai_session_id'
+const SESSION_KEY = 'dp_ai_conversation_id'
 
 /* ─── helpers ─── */
 function now() {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-function loadSession() {
+function loadConversation() {
   return sessionStorage.getItem(SESSION_KEY) || null
 }
 
-function saveSession(id) {
+function saveConversation(id) {
   if (id) sessionStorage.setItem(SESSION_KEY, id)
 }
 
-function clearSession() {
+export function clearConversation() {
   sessionStorage.removeItem(SESSION_KEY)
 }
 
@@ -39,68 +36,64 @@ function clearSession() {
 export function useChat() {
   const messages = ref([])
   const isThinking = ref(false)
-  const sessionId = ref(loadSession())
+  const conversationId = ref(loadConversation())
+  const { translate, isTranslating } = useTranslate()
 
   /**
-   * 发送消息并获取 AI 回复
+   * 发送消息并获取 AI 回复。
+   *
+   * 流程：
+   * 1. 检测中文 → 翻译为英文（解决 embedding 仅支持英文的问题）
+   * 2. 发送英文查询到 RAG 链路
+   * 3. 接收 AI 回复（系统提示词为中文，LLM 回复中文）
    */
   async function sendMessage(text) {
     if (!text.trim() || isThinking.value) return
 
     const time = now()
+    const rawText = text.trim()
 
     // 1. 用户消息
-    messages.value.push({ role: 'user', text: text.trim(), time })
+    messages.value.push({ role: 'user', text: rawText, time })
 
-    // 2. 思考中
+    // 2. 翻译 + 发送
     isThinking.value = true
-    messages.value.push({ role: 'thinking', time: '' })
 
     try {
-      const data = await postRecommend({
-        query: text.trim(),
-        sessionId: sessionId.value,
-        topK: 5,
-      })
+      // 翻译中文 → 英文（不含中文则直接返回原文）
+      const enQuery = await translate(rawText)
 
-      // 持久化 session
-      if (data.session_id) {
-        sessionId.value = data.session_id
-        saveSession(data.session_id)
+      // 如果发生了翻译，在 AI 回复中添加提示
+      const wasTranslated = enQuery !== rawText
+
+      // 发送英文查询到 RAG 链路
+      const data = await postChatSend(enQuery, conversationId.value)
+
+      // 持久化 conversation
+      if (data.conversation_id) {
+        conversationId.value = data.conversation_id
+        saveConversation(data.conversation_id)
       }
 
       // 3. AI 回复
-      messages.value.pop() // 移除 thinking
+      const aiMsg = {
+        role: 'ai',
+        intro: data.is_fallback ? '' : data.text,
+        recommendations: data.recommendations || [],
+        fallback: data.is_fallback ? data.text : '',
+        translated: wasTranslated,
+        enQuery: wasTranslated ? enQuery : undefined,
+        time: now(),
+      }
+      messages.value.push(aiMsg)
+    } catch (err) {
       messages.value.push({
         role: 'ai',
-        intro: data.answer,
-        recommendations: data.recommendations || [],
-        fallback: data.recommendations?.length === 0 ? data.answer : '',
+        intro: '',
+        recommendations: [],
+        fallback: err.message || '抱歉，发生了未知错误，请稍后再试',
         time: now(),
       })
-    } catch (err) {
-      messages.value.pop() // 移除 thinking
-
-      // 兜底处理: code 1001 返回了 alternatives
-      if (err instanceof ApiError && err.code === 1001 && err.data) {
-        messages.value.push({
-          role: 'ai',
-          intro: '',
-          recommendations: [],
-          fallback: err.data.answer || err.message,
-          alternatives: err.data.alternatives || [],
-          time: now(),
-        })
-      } else {
-        // 网络或其他错误
-        messages.value.push({
-          role: 'ai',
-          intro: '',
-          recommendations: [],
-          fallback: err.message || '抱歉，发生了未知错误，请稍后再试',
-          time: now(),
-        })
-      }
     } finally {
       isThinking.value = false
     }
@@ -111,7 +104,6 @@ export function useChat() {
    */
   function clearChat() {
     messages.value = []
-    // 注意: 不清除 session_id，保留服务端对话上下文
   }
 
   /**
@@ -130,10 +122,10 @@ export function useChat() {
   return {
     messages,
     isThinking,
-    sessionId,
+    isTranslating,
+    conversationId,
     sendMessage,
     clearChat,
     latestRecs,
-    clearSession,
   }
 }

@@ -12,6 +12,19 @@ dist
 dist-ssr
 *.local
 
+# Vue & Vite
+.vite
+vite.config.*.timestamp-*
+
+# Skills & tools
+skills/
+.clawhub/
+
+# Package manager caches
+.pnpm-store
+.yarn
+.yarn-integrity
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
