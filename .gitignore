@@ -1,10 +1,6 @@
 .idea
 .venv
-__pycache__
+
 knowledge_base
-base_config/__init__.py
-base_config/config.py
 models
 .env
-base_config/clear_indices.py
-backend/app/core/config.py
