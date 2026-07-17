@@ -91,6 +91,17 @@ class ModuleManager:
             )
         )
 
+        # Reputation module - Business reputation analysis
+        self.register(
+            ModuleInfo(
+                name="reputation",
+                description="商家口碑分析模块 - 关键特征词提取、评价情感分析",
+                module_path="app.modules.reputation.main",
+                app_variable="app",
+                port=8002
+            )
+        )
+
     def register(self, module: ModuleInfo):
         """Register a module."""
         self._modules[module.name] = module
@@ -158,6 +169,24 @@ class ModuleManager:
         except Exception as e:
             logger.error("Failed to load module '%s': %s\n%s", 'chat', e, traceback.format_exc())
             print(f"  [FAIL] Failed to load module 'chat': {e}")
+
+        # Reputation module
+        try:
+            from app.api.reputation import router as reputation_router
+            app.include_router(reputation_router)
+            print(f"  [OK] Loaded module: reputation")
+        except Exception as e:
+            logger.error("Failed to load module '%s': %s\n%s", 'reputation', e, traceback.format_exc())
+            print(f"  [FAIL] Failed to load module 'reputation': {e}")
+
+        # ── Static files ────────────────────────────────────────
+        from pathlib import Path
+        from fastapi.staticfiles import StaticFiles
+        from app.core.config import PROJECT_ROOT
+
+        static_dir = PROJECT_ROOT / "static"
+        if static_dir.exists():
+            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
         @app.get("/")
         async def root():
