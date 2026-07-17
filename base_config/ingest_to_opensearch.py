@@ -42,7 +42,7 @@ class ModelSingleton:
     """线程安全的 SentenceTransformer 单例"""
     _model = None
     _lock = threading.Lock()
-    _model_path = '../models/all-MiniLM-L6-v2'
+    _model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models', 'all-MiniLM-L6-v2')
 
     @classmethod
     def get_model(cls):
