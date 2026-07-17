@@ -80,23 +80,25 @@ async def rag_stream(
     Yields:
         SSE event strings (``data: {...}\n\n``).
     """
-    conv_id = get_or_create_conversation(conversation_id)
+    conv_id = await get_or_create_conversation(conversation_id)
 
     # 1. yield start event
     yield _sse("start", {"conversation_id": conv_id})
 
     # 2. store user message
-    add_message(conv_id, "user", query)
+    await add_message(conv_id, "user", query)
 
     # 3. search
     businesses = _search_businesses(query)
 
     # 4. no search results → let LLM chat naturally (handles greetings, small talk)
     if not businesses:
-        history = get_history(conv_id)
+        history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
+        # Ensure the current user query is in the prompt (history[-6:] may truncate it)
+        chat_messages.append({"role": "user", "content": query})
 
         llm = get_llm()
         full_response = ""
@@ -109,14 +111,14 @@ async def rag_stream(
             full_response = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
             yield _sse("delta", {"content": full_response})
 
-        add_message(conv_id, "assistant", full_response)
+        await add_message(conv_id, "assistant", full_response)
         yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
         yield _sse("done", {"total_tokens": len(full_response)})
         return
 
     # 5. build context & prompt
     context = build_context(businesses)
-    history = get_history(conv_id)
+    history = await get_history(conv_id)
     user_prompt = build_user_prompt(query, context, history)
 
     # 6. prepare structured recommendations
@@ -142,7 +144,7 @@ async def rag_stream(
         yield _sse("delta", {"content": error_msg})
 
     # 8. store assistant response
-    add_message(conv_id, "assistant", full_response)
+    await add_message(conv_id, "assistant", full_response)
 
     # 9. yield recommendations
     recs_json = json.dumps(
@@ -166,33 +168,35 @@ async def rag_generate(
 
     Useful for debugging or batch processing where streaming is unnecessary.
     """
-    conv_id = get_or_create_conversation(conversation_id)
+    conv_id = await get_or_create_conversation(conversation_id)
 
     # search
     businesses = _search_businesses(query)
 
     if not businesses:
-        history = get_history(conv_id)
+        history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
+        # Ensure the current user query is in the prompt (history[-6:] may truncate it)
+        chat_messages.append({"role": "user", "content": query})
 
-        add_message(conv_id, "user", query)
+        await add_message(conv_id, "user", query)
         llm = get_llm()
         try:
             resp = await llm.ainvoke(chat_messages)
             text = resp.content or ""
         except Exception:
             text = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
-        add_message(conv_id, "assistant", text)
+        await add_message(conv_id, "assistant", text)
         return conv_id, text, []
 
     # build
     context = build_context(businesses)
-    history = get_history(conv_id)
+    history = await get_history(conv_id)
     user_prompt = build_user_prompt(query, context, history)
 
-    add_message(conv_id, "user", query)
+    await add_message(conv_id, "user", query)
 
     llm = get_llm()
     try:
@@ -205,7 +209,7 @@ async def rag_generate(
     except Exception as e:
         text = f"抱歉，AI 服务暂时不可用: {e}"
 
-    add_message(conv_id, "assistant", text)
+    await add_message(conv_id, "assistant", text)
     recs = _build_recommendations(businesses)
 
     return conv_id, text, recs

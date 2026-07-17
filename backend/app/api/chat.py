@@ -81,12 +81,12 @@ async def chat_send(req: ChatRequest):
 @router.get("/history/{conversation_id}")
 async def conversation_history(conversation_id: str):
     """Get message history for a conversation."""
-    history = get_history(conversation_id)
+    history = await get_history(conversation_id)
     return {"conversation_id": conversation_id, "messages": history}
 
 
 @router.delete("/history/{conversation_id}")
 async def clear_chat_history(conversation_id: str):
     """Clear a conversation's history."""
-    clear_conversation(conversation_id)
+    await clear_conversation(conversation_id)
     return {"status": "ok", "message": "Conversation cleared"}
