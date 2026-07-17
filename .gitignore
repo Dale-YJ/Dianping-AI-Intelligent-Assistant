@@ -1,8 +1,10 @@
 .idea
 .venv
-__pycache__
+
 knowledge_base
+
 
 models
 .env
 base_config/clear_indices.py
+
