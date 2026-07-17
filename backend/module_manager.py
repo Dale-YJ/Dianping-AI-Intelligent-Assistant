@@ -31,7 +31,16 @@ BACKEND_PARENT = BACKEND_ROOT.parent
 if str(BACKEND_PARENT) not in sys.path:
     sys.path.insert(0, str(BACKEND_PARENT))
 
+# Add base_config for shared modules (opensearch_client, retrieve, etc.)
+BASE_CONFIG = BACKEND_PARENT / "base_config"
+if str(BASE_CONFIG) not in sys.path:
+    sys.path.insert(0, str(BASE_CONFIG))
+
+import logging
+import traceback
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class ModuleInfo:
@@ -104,7 +113,8 @@ class ModuleManager:
             module_obj = importlib.import_module(module.module_path)
             return getattr(module_obj, module.app_variable)
         except Exception as e:
-            raise RuntimeError(f"Failed to load module '{module_name}': {e}")
+            logger.error("Failed to load module '%s': %s\n%s", module_name, e, traceback.format_exc())
+            raise RuntimeError(f"Failed to load module '{module_name}': {e}") from e
 
     def create_unified_app(self):
         """Create a unified FastAPI app combining all modules."""
@@ -137,6 +147,7 @@ class ModuleManager:
             app.include_router(analysis_router)
             print(f"  [OK] Loaded module: analysis")
         except Exception as e:
+            logger.error("Failed to load module '%s': %s\n%s", 'analysis', e, traceback.format_exc())
             print(f"  [FAIL] Failed to load module 'analysis': {e}")
 
         # Chat module
@@ -145,6 +156,7 @@ class ModuleManager:
             app.include_router(chat_router)
             print(f"  [OK] Loaded module: chat")
         except Exception as e:
+            logger.error("Failed to load module '%s': %s\n%s", 'chat', e, traceback.format_exc())
             print(f"  [FAIL] Failed to load module 'chat': {e}")
 
         @app.get("/")
