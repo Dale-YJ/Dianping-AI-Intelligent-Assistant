@@ -34,7 +34,7 @@ except ImportError:
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-
+#流式输出
 @router.post("/stream")
 async def chat_stream(req: ChatRequest):
     """Main SSE streaming endpoint.
@@ -55,7 +55,7 @@ async def chat_stream(req: ChatRequest):
         },
     )
 
-
+#一次性返回
 @router.post("/send", response_model=ChatResponse)
 async def chat_send(req: ChatRequest):
     """Non-streaming fallback: returns the complete AI response at once."""

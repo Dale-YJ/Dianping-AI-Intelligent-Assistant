@@ -11,7 +11,7 @@ Usage::
 The returned client is an ``openai.AsyncOpenAI`` instance, suitable for both
 streaming and non-streaming calls.
 """
-from __future__ import annotations
+
 import threading
 from typing import Any
 from langchain_openai import ChatOpenAI
@@ -20,8 +20,6 @@ from backend.app.core.config import settings
 # ── Global singleton ───────────────────────────────────────
 _llm_client: ChatOpenAI | None = None
 _lock = threading.Lock()
-
-
 
 def get_llm(
     api_key: str | None = None,
