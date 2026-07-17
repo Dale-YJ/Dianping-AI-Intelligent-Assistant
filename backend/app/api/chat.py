@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 try:
     from backend.app.schemas.chat_schemas.schemas import ChatRequest, ChatResponse
@@ -18,6 +22,11 @@ try:
         rag_stream,
     )
 except ImportError:
+    logger.warning(
+        "Failed to import via 'backend.app.*' prefix, falling back to 'app.*'. "
+        "Ensure base_config/ is on sys.path.",
+        exc_info=True,
+    )
     from app.schemas.chat_schemas.schemas import ChatRequest, ChatResponse  # type: ignore[no-redef]
     from app.services.chat_services.conversation import (  # type: ignore[no-redef]
         clear_conversation,

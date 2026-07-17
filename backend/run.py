@@ -13,6 +13,11 @@ BACKEND_PARENT = BACKEND_ROOT.parent
 if str(BACKEND_PARENT) not in sys.path:
     sys.path.insert(0, str(BACKEND_PARENT))
 
+# Add base_config for shared modules (opensearch_client, retrieve, etc.)
+BASE_CONFIG = BACKEND_PARENT / "base_config"
+if str(BASE_CONFIG) not in sys.path:
+    sys.path.insert(0, str(BASE_CONFIG))
+
 # Create 'backend' module stub to support 'from backend.app.*' imports
 # This allows code that imports from backend.app to work without modification
 if 'backend' not in sys.modules:
