@@ -24,7 +24,36 @@ from .prompts import (
     build_context,
     build_user_prompt,
 )
-from .search_service import search_businesses, search_reviews_for_business
+
+# 统一使用 base_config 的 OpenSearch 客户端和检索接口
+from opensearch_client import get_opensearch_client
+from retrieve import hybrid_search
+
+BUSINESS_INDEX = "yelp_business"
+REVIEW_INDEX = "yelp_review"
+
+
+def _search_businesses(query: str, top_k: int = 5, min_score: float = 0.3) -> list[dict]:
+    """混合搜索商家，底层调 retrieve.hybrid_search，加 min_score 截断。"""
+    results = hybrid_search(query, k=max(top_k * 2, 10), index_name=BUSINESS_INDEX)
+    return [r for r in results if r.get("_score", 0) >= min_score][:top_k]
+
+
+def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
+    """按 business_id 查评价，按 useful 降序。"""
+    client = get_opensearch_client()
+    if not client.indices.exists(index=REVIEW_INDEX):
+        return []
+    body = {
+        "size": top_k,
+        "query": {"bool": {"must": [{"term": {"business_id": business_id}}]}},
+        "sort": [{"useful": {"order": "desc"}}],
+    }
+    try:
+        resp = client.search(index=REVIEW_INDEX, body=body)
+    except Exception:
+        return []
+    return [h["_source"] for h in resp.get("hits", {}).get("hits", [])]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -51,23 +80,25 @@ async def rag_stream(
     Yields:
         SSE event strings (``data: {...}\n\n``).
     """
-    conv_id = get_or_create_conversation(conversation_id)
+    conv_id = await get_or_create_conversation(conversation_id)
 
     # 1. yield start event
     yield _sse("start", {"conversation_id": conv_id})
 
     # 2. store user message
-    add_message(conv_id, "user", query)
+    await add_message(conv_id, "user", query)
 
     # 3. search
-    businesses = search_businesses(query)
+    businesses = _search_businesses(query)
 
     # 4. no search results → let LLM chat naturally (handles greetings, small talk)
     if not businesses:
-        history = get_history(conv_id)
+        history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
+        # Ensure the current user query is in the prompt (history[-6:] may truncate it)
+        chat_messages.append({"role": "user", "content": query})
 
         llm = get_llm()
         full_response = ""
@@ -80,14 +111,14 @@ async def rag_stream(
             full_response = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
             yield _sse("delta", {"content": full_response})
 
-        add_message(conv_id, "assistant", full_response)
+        await add_message(conv_id, "assistant", full_response)
         yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
         yield _sse("done", {"total_tokens": len(full_response)})
         return
 
     # 5. build context & prompt
     context = build_context(businesses)
-    history = get_history(conv_id)
+    history = await get_history(conv_id)
     user_prompt = build_user_prompt(query, context, history)
 
     # 6. prepare structured recommendations
@@ -113,7 +144,7 @@ async def rag_stream(
         yield _sse("delta", {"content": error_msg})
 
     # 8. store assistant response
-    add_message(conv_id, "assistant", full_response)
+    await add_message(conv_id, "assistant", full_response)
 
     # 9. yield recommendations
     recs_json = json.dumps(
@@ -137,33 +168,35 @@ async def rag_generate(
 
     Useful for debugging or batch processing where streaming is unnecessary.
     """
-    conv_id = get_or_create_conversation(conversation_id)
+    conv_id = await get_or_create_conversation(conversation_id)
 
     # search
-    businesses = search_businesses(query)
+    businesses = _search_businesses(query)
 
     if not businesses:
-        history = get_history(conv_id)
+        history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
+        # Ensure the current user query is in the prompt (history[-6:] may truncate it)
+        chat_messages.append({"role": "user", "content": query})
 
-        add_message(conv_id, "user", query)
+        await add_message(conv_id, "user", query)
         llm = get_llm()
         try:
             resp = await llm.ainvoke(chat_messages)
             text = resp.content or ""
         except Exception:
             text = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
-        add_message(conv_id, "assistant", text)
+        await add_message(conv_id, "assistant", text)
         return conv_id, text, []
 
     # build
     context = build_context(businesses)
-    history = get_history(conv_id)
+    history = await get_history(conv_id)
     user_prompt = build_user_prompt(query, context, history)
 
-    add_message(conv_id, "user", query)
+    await add_message(conv_id, "user", query)
 
     llm = get_llm()
     try:
@@ -176,7 +209,7 @@ async def rag_generate(
     except Exception as e:
         text = f"抱歉，AI 服务暂时不可用: {e}"
 
-    add_message(conv_id, "assistant", text)
+    await add_message(conv_id, "assistant", text)
     recs = _build_recommendations(businesses)
 
     return conv_id, text, recs
@@ -209,7 +242,7 @@ def _build_recommendations(
     items: list[RecommendationItem] = []
     for biz in businesses[:5]:
         biz_id = biz.get("business_id", "")
-        reviews = search_reviews_for_business(biz_id, top_k=3)
+        reviews = _search_reviews(biz_id, top_k=3)
 
         sources: list[SourceInfo] = []
         for r in reviews:
