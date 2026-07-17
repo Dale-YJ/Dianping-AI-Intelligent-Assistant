@@ -1,0 +1,1 @@
+"""Chat module - Conversational shop recommendation."""
