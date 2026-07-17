@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     # LLM
     api_key: str = Field(default="", alias="OPENAI_API_KEY")
     base_url: str = Field(default="", alias="OPENAI_BASE_URL")
-    llm_model: str = Field(default="", alias="LLM_MODEL")
+
+    llm_model: str = "deepseek-chat"
+
 
     # OpenSearch
     opensearch_host: str = "localhost"
@@ -24,7 +26,9 @@ class Settings(BaseSettings):
     opensearch_use_ssl: bool = True
     opensearch_index: str = "rag_kb_v1"
 
-    # models relative path
+
+    # modelss relative path
+
     embedding_model_path: str = "../models/bge-base-zh-v1.5"
     rerank_model_path: str = "../models/bge-reranker-v2-m3"
 
@@ -40,7 +44,9 @@ class Settings(BaseSettings):
         auth = f":{self.redis_password}@" if self.redis_password else ""
         return f"redis://{auth}{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
-    # models absolute path
+
+    # modelss absolute path
+
     @property
     def embedding_model_dir(self) -> str:
         p = Path(self.embedding_model_path)

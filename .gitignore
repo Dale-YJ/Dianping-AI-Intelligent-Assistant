@@ -2,5 +2,9 @@
 .venv
 
 knowledge_base
+
+
 models
 .env
+base_config/clear_indices.py
+
