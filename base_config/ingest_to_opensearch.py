@@ -6,6 +6,8 @@ import json
 import os
 import time
 import threading
+
+from config import settings
 from opensearch_client import get_opensearch_client
 
 # 当前文件路径
@@ -29,8 +31,8 @@ CHECKIN_INDEX="yelp_checkin"
 TIP_INDEX="yelp_tip"
 USER_INDEX="yelp_user"
 
-# 向量维度 (all-MiniLM-L6-v2模型)
-VECTOR_DIM = 384
+
+VECTOR_DIM = settings.vector_dim
 
 # 批量处理大小
 BATCH_SIZE = 500
@@ -42,7 +44,7 @@ class ModelSingleton:
     """线程安全的 SentenceTransformer 单例"""
     _model = None
     _lock = threading.Lock()
-    _model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models', 'all-MiniLM-L6-v2')
+    _model_path = settings.embedding_model_dir
 
     @classmethod
     def get_model(cls):
