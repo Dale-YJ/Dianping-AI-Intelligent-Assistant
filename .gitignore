@@ -8,3 +8,13 @@ models
 .env
 base_config/clear_indices.py
 
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Large files
+bge_m3_model/imgs/
+backend.zip
+package-lock.json
+

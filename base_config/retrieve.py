@@ -1,7 +1,8 @@
+import os
 import threading
+import torch
 
 from opensearch_client import get_opensearch_client
-from ingest_to_opensearch import ModelSingleton
 from typing import Literal
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -11,14 +12,51 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 # 索引名称
 BUSINESS_INDEX = "yelp_business"
 REVIEW_INDEX = "yelp_review"
-CHECKIN_INDEX="yelp_checkin"
-TIP_INDEX="yelp_tip"
-USER_INDEX="yelp_user"
+CHECKIN_INDEX = "yelp_checkin"
+TIP_INDEX = "yelp_tip"
+USER_INDEX = "yelp_user"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Model Singleton（与 ingest 保持一致，自动检测 GPU）
+# ═══════════════════════════════════════════════════════════════
+
+class ModelSingleton:
+    """线程安全的 SentenceTransformer 单例"""
+
+    _model = None
+    _lock = threading.Lock()
+    _model_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", "models", "bge-base-zh-v1.5"
+    )
+
+    @classmethod
+    def _detect_device(cls) -> str:
+        if torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+
+    @classmethod
+    def get_model(cls):
+        if cls._model is None:
+            with cls._lock:
+                if cls._model is None:
+                    from sentence_transformers import SentenceTransformer
+                    device = cls._detect_device()
+                    cls._model = SentenceTransformer(cls._model_path, device=device)
+                    cls._model.max_seq_length = 512
+        return cls._model
+
 
 def embed_query(query: str) -> list[float]:
     """把用户查询转成向量"""
     model = ModelSingleton().get_model()
-    return model.encode(query, convert_to_numpy=True).tolist()
+    return model.encode(
+        query,
+        convert_to_numpy=True,
+        normalize_embeddings=True,   # 与入库时保持一致
+    ).tolist()
 
 def _format_hits(resp: dict) -> list[dict]:
     """把 OpenSearch 原始响应格式化成简洁的 dict 列表"""
