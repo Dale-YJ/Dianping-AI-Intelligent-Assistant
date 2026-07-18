@@ -150,6 +150,69 @@ async def conversation_count() -> int:
 
         return count
 
+async def list_conversations() -> list[dict[str, Any]]:
+    """List all conversations with id, title, message_count, updated_at."""
+    import time
+
+    await redis_manager.initialize()
+    async with redis_manager.get_client() as client:
+        conversations = []
+        cursor = 0
+        pattern = f"{CONVERSATION_KEY_PREFIX}*"
+
+        while True:
+            cursor, keys = await client.scan(cursor, match=pattern, count=100)
+            for key in keys:
+                conv_id = key.decode("utf-8").removeprefix(CONVERSATION_KEY_PREFIX)
+
+                pipe = client.pipeline()
+                pipe.llen(key)
+                pipe.lrange(key, 1, 6)  # skip init marker, grab up to 6 real msgs for title
+                pipe.ttl(key)
+                results = await pipe.execute()
+
+                msg_count = results[0]
+                if msg_count == 0:
+                    continue  # expired or empty, skip
+
+                raw_msgs = results[1]
+                ttl = results[2]
+
+                # Derive title from first user message
+                title = "新对话"
+                for raw in raw_msgs:
+                    try:
+                        msg = _deserialize_message(
+                            raw.decode("utf-8") if isinstance(raw, bytes) else raw
+                        )
+                        if msg.get("role") == "user":
+                            title = msg.get("content", "新对话")[:50]
+                            break
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+
+                # Approximate updated_at from remaining TTL
+                now_ts = int(time.time())
+                if ttl > 0:
+                    updated_at = now_ts - (HISTORY_TTL - ttl)
+                else:
+                    updated_at = now_ts
+                    await client.expire(key, HISTORY_TTL)
+
+                conversations.append({
+                    "id": conv_id,
+                    "title": title,
+                    "message_count": msg_count,
+                    "updated_at": updated_at,
+                })
+
+            if cursor == 0:
+                break
+
+        conversations.sort(key=lambda c: c["updated_at"], reverse=True)
+        return conversations
+
+
 async def close_redis():
     await redis_manager.close()
 
