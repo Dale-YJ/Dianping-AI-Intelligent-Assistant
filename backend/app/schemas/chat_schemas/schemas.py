@@ -66,3 +66,18 @@ class StreamDone(BaseModel):
     """SSE event: stream complete."""
     type: str = "done"
     total_tokens: int = 0
+
+
+# ── Conversation list ────────────────────────────────────
+
+class ConversationItem(BaseModel):
+    """A single conversation in the list."""
+    id: str
+    title: str
+    message_count: int
+    updated_at: int  # unix timestamp
+
+
+class ConversationListResponse(BaseModel):
+    """Response for GET /api/chat/conversations."""
+    conversations: list[ConversationItem]

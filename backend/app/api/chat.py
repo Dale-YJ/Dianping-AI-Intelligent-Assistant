@@ -10,11 +10,17 @@ from fastapi.responses import StreamingResponse
 logger = logging.getLogger(__name__)
 
 try:
-    from backend.app.schemas.chat_schemas.schemas import ChatRequest, ChatResponse
+    from backend.app.schemas.chat_schemas.schemas import (
+        ChatRequest,
+        ChatResponse,
+        ConversationItem,
+        ConversationListResponse,
+    )
     from backend.app.services.chat_services.conversation import (
         clear_conversation,
         get_history,
         get_or_create_conversation,
+        list_conversations,
     )
     from backend.app.services.chat_services.rag_service import (
         _build_recommendations,
@@ -27,11 +33,17 @@ except ImportError:
         "Ensure base_config/ is on sys.path.",
         exc_info=True,
     )
-    from app.schemas.chat_schemas.schemas import ChatRequest, ChatResponse  # type: ignore[no-redef]
+    from app.schemas.chat_schemas.schemas import (  # type: ignore[no-redef]
+        ChatRequest,
+        ChatResponse,
+        ConversationItem,
+        ConversationListResponse,
+    )
     from app.services.chat_services.conversation import (  # type: ignore[no-redef]
         clear_conversation,
         get_history,
         get_or_create_conversation,
+        list_conversations,
     )
     from app.services.chat_services.rag_service import (  # type: ignore[no-redef]
         _build_recommendations,
@@ -76,6 +88,13 @@ async def chat_send(req: ChatRequest):
         recommendations=recs,
         is_fallback=is_fallback,
     )
+
+
+@router.get("/conversations", response_model=ConversationListResponse)
+async def conversation_list():
+    """List all conversations with metadata."""
+    conversations = await list_conversations()
+    return {"conversations": conversations}
 
 
 @router.get("/history/{conversation_id}")
