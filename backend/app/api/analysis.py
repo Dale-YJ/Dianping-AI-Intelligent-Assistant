@@ -19,6 +19,7 @@ from app.services.analysis_services.retrieval import (
     get_all_businesses,
     vector_search_reviews,
     search_businesses_local,
+    get_businesses_with_reviews,  # 新增：高效查询函数
 )
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,68 @@ async def api_businesses(
         })
     except Exception as e:
         logger.error(f"商家列表查询失败: {e}")
+        return make_response(500, message=str(e))
+
+
+# ── B.1.1 高效商家列表（仅返回有评价的商家）────────────────
+
+@router.get("/businesses/with-reviews")
+async def api_businesses_with_reviews(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=10000, description="每页数量（最大10000）"),
+    keyword: str = Query("", description="关键词搜索"),
+    category: str = Query("", description="分类筛选"),
+    min_rating: float = Query(0, ge=0, le=5, description="最低评分"),
+    min_reviews: int = Query(1, ge=1, description="最低评价数量"),
+    sort_by: str = Query("rating", pattern="^(rating|review_count)$", description="排序字段"),
+):
+    """高效商家列表（仅返回有评价的商家）
+    
+    性能优化：
+    - 旧方法：O(n) - 每个商家发一次请求
+    - 新方法：O(1) - 只发2次请求（聚合+批量查询）
+    
+    适用于前端加载大量商家时使用，避免页面崩溃
+    """
+    logger.info(f"🔥 api_businesses_with_reviews 被调用: page={page}, page_size={page_size}, min_reviews={min_reviews}")
+    try:
+        logger.info(f"开始调用 get_businesses_with_reviews...")
+        items, total = get_businesses_with_reviews(
+            keyword=keyword,
+            category=category,
+            min_rating=min_rating,
+            min_reviews=min_reviews,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+        )
+        logger.info(f"✅ 查询成功: total={total}, items={len(items)}")
+
+        # 格式化输出
+        formatted_items = []
+        for biz in items:
+            formatted_items.append({
+                "business_id": biz.get("business_id", ""),
+                "name": biz.get("name", ""),
+                "address": f"{biz.get('address', '')}, {biz.get('city', '')}, {biz.get('state', '')} {biz.get('postal_code', '')}",
+                "city": biz.get("city", ""),
+                "state": biz.get("state", ""),
+                "latitude": biz.get("latitude", 0),
+                "longitude": biz.get("longitude", 0),
+                "rating": biz.get("stars", 0),
+                "review_count": biz.get("review_count", 0),
+                "real_review_count": biz.get("real_review_count", 0),  # 真实评价数量
+                "categories": biz.get("categories", "").split(", ") if biz.get("categories") else [],
+            })
+
+        return make_response(0, {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": formatted_items,
+        })
+    except Exception as e:
+        logger.error(f"高效商家列表查询失败: {e}")
         return make_response(500, message=str(e))
 
 
