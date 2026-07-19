@@ -45,8 +45,44 @@ logger = logging.getLogger(__name__)
 BUSINESS_INDEX = "yelp_business"
 REVIEW_INDEX = "yelp_review"
 
+# ── Cuisine alias mapping ───────────────────────────────────
+# Common abbreviations → full cuisine names found in actual data.
+# Used by _apply_cuisine_boost() to match user intent with
+# business categories when there's a semantic gap.
+
+CUISINE_ALIASES: dict[str, list[str]] = {
+    "日料": ["日本料理", "日式料理", "日料"],
+    "韩料": ["韩式料理", "韩国料理", "韩式烤肉"],
+    "川菜": ["川菜", "川菜馆", "四川菜", "四川火锅"],
+    "湘菜": ["湘菜", "湖南菜"],
+    "粤菜": ["粤菜", "粤菜馆", "广东菜", "粤式茶点", "茶餐厅"],
+    "火锅": ["火锅", "四川火锅", "老北京火锅", "火锅自助", "川味火锅"],
+    "烤鸭": ["烤鸭", "京菜"],
+    "面馆": ["面馆", "面", "粉面馆", "重庆小面"],
+    "西餐": ["西餐", "意大利菜", "法国菜"],
+    "烧烤": ["烧烤", "烤肉"],
+    "本帮菜": ["本帮菜", "上海菜"],
+    "云南菜": ["云南菜", "滇菜"],
+    "新疆菜": ["新疆菜"],
+    "苏浙菜": ["苏浙菜", "淮扬菜", "江浙菜", "浙菜"],
+    "鲁菜": ["鲁菜"],
+    "素食": ["素食", "素菜"],
+    "潮汕菜": ["潮汕菜", "潮州菜"],
+    "内蒙菜": ["内蒙菜"],
+    "私房菜": ["私房菜"],
+    "农家菜": ["农家菜"],
+    "小吃": ["小吃", "快餐简餐", "粉面馆"],
+    "海鲜": ["海鲜", "海鲜火锅"],
+    "自助": ["自助", "自助餐", "火锅自助"],
+    "咖啡": ["咖啡", "咖啡厅", "面包甜点"],
+    "甜品": ["甜品", "面包甜点", "蛋糕", "冰淇淋"],
+}
+
+# Boost multipliers
+CUISINE_MATCH_BOOST = 2.0     # score multiplier when cuisine matches
+CUISINE_MISMATCH_PENALTY = 0.5  # score multiplier when cuisine requested but no match
+
 # Reranker settings
-RERANK_CANDIDATE_MULTIPLIER = 4  # fetch top_k * N candidates, rerank, then trim
 RERANK_MIN_POOL_SIZE = 15        # minimum candidates before reranking
 
 
@@ -160,6 +196,99 @@ def _search_businesses_via_reviews(
     return businesses
 
 
+# ═══════════════════════════════════════════════════════════════
+# Cuisine boost — post-search score adjustment
+# ═══════════════════════════════════════════════════════════════
+
+def _detect_cuisine_intent(query: str, rewritten_categories: list[str]) -> list[str]:
+    """Detect which cuisine aliases the user is asking about.
+
+    Checks both the original query and the LLM-rewritten categories against
+    CUISINE_ALIASES keys. Returns the set of alias group keys that match
+    (e.g. ``["日料", "川菜"]``).
+
+    Args:
+        query: The original user query.
+        rewritten_categories: Categories extracted by the query rewriter.
+
+    Returns:
+        List of matched alias keys, or empty list if no cuisine intent detected.
+    """
+    matched: list[str] = []
+    combined = query + " " + " ".join(rewritten_categories)
+    for alias_key in CUISINE_ALIASES:
+        if alias_key in combined:
+            matched.append(alias_key)
+    # Also check full-form aliases in the query (e.g. user typed "日本料理" directly)
+    if not matched:
+        for alias_key, aliases in CUISINE_ALIASES.items():
+            for full_form in aliases:
+                if full_form in combined:
+                    matched.append(alias_key)
+                    break
+    return matched
+
+
+def _apply_cuisine_boost(
+    candidates: list[dict],
+    cuisine_keys: list[str],
+) -> list[dict]:
+    """Apply cuisine match boost / mismatch penalty to candidate scores.
+
+    For each candidate, checks whether its ``categories`` field contains
+    any of the full-form aliases for the detected cuisine intent. Matching
+    candidates get their ``_score`` multiplied by ``CUISINE_MATCH_BOOST``;
+    non-matching candidates get ``CUISINE_MISMATCH_PENALTY``.
+
+    If ``cuisine_keys`` is empty (no cuisine intent detected), candidates
+    are returned unchanged.
+
+    Args:
+        candidates: Business documents from search, each with ``_score``.
+        cuisine_keys: Alias keys detected by :func:`_detect_cuisine_intent`.
+
+    Returns:
+        Candidates with adjusted ``_score`` values, re-sorted descending.
+    """
+    if not cuisine_keys or not candidates:
+        return candidates
+
+    # Collect all full-form category names for the matched aliases
+    target_categories: set[str] = set()
+    for key in cuisine_keys:
+        aliases = CUISINE_ALIASES.get(key, [])
+        target_categories.update(aliases)
+
+    logger.info(
+        f"Cuisine boost: intent={cuisine_keys}, "
+        f"target_categories={target_categories}"
+    )
+
+    for doc in candidates:
+        doc_categories = doc.get("categories", "")
+        matched = any(
+            cat in doc_categories
+            for cat in target_categories
+        )
+        if matched:
+            doc["_score"] *= CUISINE_MATCH_BOOST
+            doc["_cuisine_match"] = True
+        else:
+            doc["_score"] *= CUISINE_MISMATCH_PENALTY
+            doc["_cuisine_match"] = False
+
+    # Re-sort by adjusted score
+    candidates.sort(key=lambda d: d.get("_score", 0), reverse=True)
+
+    boost_stats = {
+        "matched": sum(1 for d in candidates if d.get("_cuisine_match")),
+        "penalized": sum(1 for d in candidates if not d.get("_cuisine_match")),
+    }
+    logger.info(f"Cuisine boost applied: {boost_stats}")
+
+    return candidates
+
+
 async def _search_with_rewrite_and_rerank(
     query: str,
     top_k: int = 5,
@@ -260,6 +389,15 @@ async def _search_with_rewrite_and_rerank(
         if filtered:
             candidates = filtered
         # If all candidates are filtered out, keep the original pool
+
+    # --- Step 3.5: Cuisine boost/penalty ---
+    # Detect cuisine intent from the query and boost matching businesses,
+    # penalize non-matching ones. This handles abbreviated cuisine names
+    # like "日料" → "日本料理" that the vector search usually catches
+    # but may miss in edge cases.
+    cuisine_keys = _detect_cuisine_intent(query, rewritten.get("categories", []))
+    if cuisine_keys and len(candidates) > 1:
+        candidates = _apply_cuisine_boost(candidates, cuisine_keys)
 
     if len(candidates) <= 1:
         # Too few to meaningfully rerank
