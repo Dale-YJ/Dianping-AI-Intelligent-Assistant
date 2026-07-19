@@ -9,7 +9,7 @@ extract structured search requirements from the conversation.
 from __future__ import annotations
 
 # 统一使用 base_config 的 OpenSearch 客户端
-from opensearch_client import get_opensearch_client
+from base_config.opensearch_client import get_opensearch_client
 
 REVIEW_INDEX = "yelp_review"
 
