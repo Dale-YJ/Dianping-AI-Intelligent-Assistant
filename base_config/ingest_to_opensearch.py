@@ -8,6 +8,7 @@ import time
 import threading
 import torch
 from opensearch_client import get_opensearch_client
+from config import settings
 
 # 当前文件路径
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,52 +31,65 @@ CHECKIN_INDEX = "yelp_checkin"
 TIP_INDEX = "yelp_tip"
 USER_INDEX = "yelp_user"
 
-# 向量维度 (bge-base-zh-v1.5 模型)
-VECTOR_DIM = 768
+# 向量维度 (BAAI/bge-base-zh-v1.5 模型)
+VECTOR_DIM = settings.vector_dim
 
-# OpenSearch 批量写入大小
-BULK_SIZE = 500
+# 批量处理大小（写入 OpenSearch 的批次大小）
+BATCH_SIZE = 500
 
-# 编码批量大小：GPU 建议 64-128，CPU 建议 8-16
-ENCODING_BATCH_SIZE = 16
+# 编码批次大小（GPU 批量推理的批次大小，根据显存调整）
+ENCODING_BATCH_SIZE = 64
 
 
 class ModelSingleton:
-    """线程安全的 SentenceTransformer 单例 — 自动检测 GPU 加速"""
+    """线程安全的 SentenceTransformer 单例，自动检测 GPU"""
 
     _model = None
     _lock = threading.Lock()
-    _model_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "models", "bge-base-zh-v1.5"
-    )
+    _model_path = settings.embedding_model_dir
+    _device = None  # 缓存检测到的设备
 
     @classmethod
-    def _detect_device(cls) -> str:
-        """自动检测最佳设备"""
-        if torch.cuda.is_available():
-            device = "cuda"
-            gpu_name = torch.cuda.get_device_name(0)
-            vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
-            print(f"🚀 GPU 已检测到: {gpu_name} ({vram:.1f} GB)")
-        else:
-            device = "cpu"
-            print("💻 未检测到 GPU，使用 CPU 推理")
-        return device
+    def _detect_device(cls):
+        """检测可用设备：CUDA > MPS > CPU，并打印设备信息"""
+        if cls._device is not None:
+            return cls._device
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                cls._device = "cuda"
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_mem = torch.cuda.get_device_properties(0).total_mem / 1024**3
+                print(f"   🚀 GPU 检测成功: {gpu_name} ({gpu_mem:.1f} GB)")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                cls._device = "mps"
+                print(f"   🍎 Apple MPS (Metal) 可用")
+            else:
+                cls._device = "cpu"
+                print(f"   ⚠️ 未检测到 GPU，使用 CPU 编码（速度较慢）")
+                print(f"   💡 提示: 如需 GPU 加速，请安装 CUDA 版 PyTorch:")
+                print(f"      pip install torch --index-url https://download.pytorch.org/whl/cu121")
+        except ImportError:
+            cls._device = "cpu"
+            print(f"   ⚠️ torch 未安装，回退到 CPU")
+
+        return cls._device
 
     @classmethod
-    def get_model(cls) -> SentenceTransformer:
+    def get_model(cls):
+        """返回模型单例，首次调用时自动检测设备并加载模型"""
         if cls._model is None:
             with cls._lock:
                 if cls._model is None:
                     device = cls._detect_device()
-                    print(f"⏳ 加载模型 {cls._model_path} 到 {device} ...")
+                    print(f"   📦 加载模型 {cls._model_path} -> {device} ...")
                     cls._model = SentenceTransformer(
                         cls._model_path,
                         device=device,
                     )
-                    cls._model.max_seq_length = 512
-                    print(f"✅ 模型加载完成")
+                    print(f"   ✅ 模型加载完成")
         return cls._model
 
 
@@ -133,86 +147,89 @@ def create_knn_index(client, index_name):
     print(f"✅ 创建 KNN 索引: {index_name}")
 
 
+def _resolve_doc_id(doc: dict, index_name: str) -> str | None:
+    """根据索引类型解析文档 ID"""
+    id_field_map = {
+        BUSINESS_INDEX: "business_id",
+        REVIEW_INDEX: "review_id",
+        CHECKIN_INDEX: "business_id",
+        TIP_INDEX: "user_id",
+        USER_INDEX: "user_id",
+    }
+    field = id_field_map.get(index_name, "business_id")
+    return doc.get(field)
+
+
+
 def bulk_import(client, file_path, index_name):
-    """批量导入数据（优化版：批量编码 + GPU 自动检测）"""
+    """批量导入数据（优化版：分两阶段 — 先批量编码，再批量写入）"""
     print(f"\n📥 导入数据到 {index_name}")
     create_knn_index(client, index_name)
 
     model = ModelSingleton.get_model()
+    overall_start = time.time()
 
     # ═══════════════════════════════════════════════════════════
-    # 第一步：读取文件，解析 JSON，准备待编码文本
+    # 第一阶段：读取文件，解析 JSON，准备待编码文本
     # ═══════════════════════════════════════════════════════════
-    print(f"   📖 读取数据文件...")
-    documents = []  # [(doc_dict, text_for_embedding, doc_id), ...]
+    documents: list[tuple[dict, str, str | None]] = []  # (doc, text, doc_id)
+    parse_errors = 0
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    print(f"   📖 读取并解析 JSON 文件...")
+    with open(file_path, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             try:
                 doc = json.loads(line.strip())
                 text = traverse_json(doc)
-
-                # 确定文档 ID
-                if index_name == REVIEW_INDEX:
-                    doc_id = doc.get("review_id")
-                elif index_name == CHECKIN_INDEX:
-                    doc_id = doc.get("business_id")
-                elif index_name == TIP_INDEX:
-                    doc_id = doc.get("user_id")
-                elif index_name == USER_INDEX:
-                    doc_id = doc.get("user_id")
-                else:  # BUSINESS_INDEX
-                    doc_id = doc.get("business_id")
-
+                doc_id = _resolve_doc_id(doc, index_name)
                 documents.append((doc, text, doc_id))
-
             except json.JSONDecodeError as e:
-                print(f"   ⚠️第{line_num}行 JSON 解析错误: {e}")
+                print(f"   ⚠️ 第{line_num}行 JSON 解析错误: {e}")
+                parse_errors += 1
             except Exception as e:
-                print(f"   ⚠️处理第{line_num}行时出错: {e}")
+                print(f"   ⚠️ 第{line_num}行处理出错: {e}")
+                parse_errors += 1
 
     total_count = len(documents)
     if total_count == 0:
         print(f"   ❌ 没有有效数据，跳过 {index_name}")
         return
-    print(f"   ✅ 读取完成，共 {total_count} 条文档")
+
+    read_elapsed = time.time() - overall_start
+    print(f"   ✅ 读取完成: {total_count} 条文档 ({read_elapsed:.1f}s)"
+          + (f", 解析失败 {parse_errors} 行" if parse_errors else ""))
 
     # ═══════════════════════════════════════════════════════════
-    # 第二步：批量编码（关键优化！）
+    # 第二阶段：批量编码（关键优化！一次性批量推理）
     # ═══════════════════════════════════════════════════════════
-    print(f"   🔢 开始批量编码 (encoding_batch={ENCODING_BATCH_SIZE})...")
+    all_texts = [text for _, text, _ in documents]
+    print(f"   🔢 开始批量编码 {total_count} 条文本 "
+          f"(encoding_batch={ENCODING_BATCH_SIZE})...")
     encode_start = time.time()
 
-    all_embeddings = []
-    for i in range(0, total_count, ENCODING_BATCH_SIZE):
-        chunk = documents[i : i + ENCODING_BATCH_SIZE]
-        texts = [text for _, text, _ in chunk]
-
-        embeddings = model.encode(
-            texts,
-            batch_size=ENCODING_BATCH_SIZE,
-            convert_to_numpy=True,
-            normalize_embeddings=True,   # 余弦相似度需要归一化
-            show_progress_bar=True,
-        )
-        all_embeddings.extend(embeddings)
+    # 使用 model.encode 的批量推理，充分利用 GPU
+    all_embeddings = model.encode(
+        all_texts,
+        batch_size=ENCODING_BATCH_SIZE,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+    )
 
     encode_elapsed = time.time() - encode_start
     encode_rate = total_count / encode_elapsed if encode_elapsed > 0 else 0
-    print(f"   ✅ 编码完成，耗时 {encode_elapsed:.1f}秒 "
-          f"({encode_rate:.0f}条/秒)")
+    print(f"   ✅ 编码完成: {encode_elapsed:.1f}s ({encode_rate:.0f} 条/秒)")
 
     # ═══════════════════════════════════════════════════════════
-    # 第三步：组装文档，批量写入 OpenSearch
+    # 第三阶段：构建 action 并批量写入 OpenSearch
     # ═══════════════════════════════════════════════════════════
-    print(f"   💾 写入 OpenSearch...")
-    write_start = time.time()
     success_count = 0
     error_count = 0
-    batch_actions = []
+    batch_actions: list[dict] = []
+    write_start = time.time()
 
-    for (doc, text, doc_id), embedding in zip(documents, all_embeddings):
-        doc["embedding"] = convert_vector_to_list(embedding)
+    for idx, (doc, text, doc_id) in enumerate(documents):
+        # 把向量填入文档
+        doc["embedding"] = convert_vector_to_list(all_embeddings[idx])
         doc["text_for_embedding"] = text
 
         action = {
@@ -222,12 +239,11 @@ def bulk_import(client, file_path, index_name):
         }
         batch_actions.append(action)
 
-        # 积累到 BULK_SIZE 条后提交
-        if len(batch_actions) >= BULK_SIZE:
+        if len(batch_actions) >= BATCH_SIZE:
             success, errors = bulk(
                 client,
                 batch_actions,
-                chunk_size=BULK_SIZE,
+                chunk_size=BATCH_SIZE,
                 raise_on_error=False,
             )
             success_count += success
@@ -237,11 +253,12 @@ def bulk_import(client, file_path, index_name):
             elapsed = time.time() - write_start
             rate = success_count / elapsed if elapsed > 0 else 0
             print(f"   已写入: {success_count}/{total_count} | "
-                  f"失败: {error_count} | 速率: {rate:.0f}条/秒")
+                  f"失败: {error_count} | 速率: {rate:.0f} 条/秒")
 
             batch_actions = []
+            batch_actions = []
 
-    # 处理剩余的
+    # 处理剩余的数据
     if batch_actions:
         success, errors = bulk(
             client,
@@ -257,15 +274,13 @@ def bulk_import(client, file_path, index_name):
     # ═══════════════════════════════════════════════════════════
     # 汇总
     # ═══════════════════════════════════════════════════════════
-    total_elapsed = time.time() - encode_start
+    total_elapsed = time.time() - overall_start
     print(f"\n✅ {index_name} 导入完成!")
-    print(f"   总文档数: {total_count}条")
-    print(f"   成功写入: {success_count}条")
-    print(f"   写入失败: {error_count}条")
-    print(f"   编码耗时: {encode_elapsed:.1f}秒 ({encode_rate:.0f}条/秒)")
-    print(f"   写入耗时: {write_elapsed:.1f}秒")
-    print(f"   总耗时:   {total_elapsed:.1f}秒")
-    print(f"   整体速率: {success_count / total_elapsed:.0f}条/秒")
+    print(f"   总处理: {total_count} 条")
+    print(f"   成功: {success_count} 条")
+    print(f"   失败: {error_count} 条")
+    print(f"   编码耗时: {encode_elapsed:.1f}s | 写入耗时: {write_elapsed:.1f}s | 总耗时: {total_elapsed:.1f}s")
+    print(f"   平均速度: {success_count / total_elapsed:.1f} 条/秒")
 
 
 def verify_data(client):

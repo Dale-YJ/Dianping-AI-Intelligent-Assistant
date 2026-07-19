@@ -15,7 +15,7 @@ streaming and non-streaming calls.
 import threading
 from typing import Any
 from langchain_openai import ChatOpenAI
-from app.core.config import settings
+from backend.app.core.config import settings
 
 # ── Global singleton ───────────────────────────────────────
 _llm_client: ChatOpenAI | None = None

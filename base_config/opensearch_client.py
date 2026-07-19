@@ -38,6 +38,7 @@ def get_opensearch_client() -> OpenSearch:
 
 
 if __name__ == "__main__":
+
     client = get_opensearch_client()
     print(f"OpenSearch 已连接: {client.info()['version']['number']}")
     print(f"yelp_business 文档数: {client.count(index='yelp_business')['count']}")
@@ -49,3 +50,4 @@ if __name__ == "__main__":
     for hit in res["hits"]["hits"]:
         s = hit["_source"]
         print(f"  - {s['name']} ({s['city']}, {s['state']}) ★{s['stars']}")
+

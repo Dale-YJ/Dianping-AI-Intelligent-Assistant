@@ -21,6 +21,12 @@ GUANGZHOU_INDEX="guangzhou"
 SHANGHAI_INDEX="shanghai"
 
 
+BEIJING_INDEX="beijing"
+CHENGDU_INDEX="chengdu"
+GUANGZHOU_INDEX="guangzhou"
+SHANGHAI_INDEX="shanghai"
+
+
 def embed_query(query: str) -> list[float]:
     """把用户查询转成向量"""
     model = ModelSingleton().get_model()
