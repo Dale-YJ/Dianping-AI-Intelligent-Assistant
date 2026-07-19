@@ -1,8 +1,7 @@
-import os
 import threading
-import torch
 
 from opensearch_client import get_opensearch_client
+from ingest_to_opensearch import ModelSingleton
 from typing import Literal
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -12,41 +11,14 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 # 索引名称
 BUSINESS_INDEX = "yelp_business"
 REVIEW_INDEX = "yelp_review"
-CHECKIN_INDEX = "yelp_checkin"
-TIP_INDEX = "yelp_tip"
-USER_INDEX = "yelp_user"
+CHECKIN_INDEX="yelp_checkin"
+TIP_INDEX="yelp_tip"
+USER_INDEX="yelp_user"
 
-
-# ═══════════════════════════════════════════════════════════════
-# Model Singleton（与 ingest 保持一致，自动检测 GPU）
-# ═══════════════════════════════════════════════════════════════
-
-class ModelSingleton:
-    """线程安全的 SentenceTransformer 单例"""
-
-    _model = None
-    _lock = threading.Lock()
-    _model_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "models", "bge-base-zh-v1.5"
-    )
-
-    @classmethod
-    def _detect_device(cls) -> str:
-        if torch.cuda.is_available():
-            return "cuda"
-        return "cpu"
-
-    @classmethod
-    def get_model(cls):
-        if cls._model is None:
-            with cls._lock:
-                if cls._model is None:
-                    from sentence_transformers import SentenceTransformer
-                    device = cls._detect_device()
-                    cls._model = SentenceTransformer(cls._model_path, device=device)
-                    cls._model.max_seq_length = 512
-        return cls._model
+BEIJING_INDEX="beijing"
+CHENGDU_INDEX="chengdu"
+GUANGZHOU_INDEX="guangzhou"
+SHANGHAI_INDEX="shanghai"
 
 
 BEIJING_INDEX="beijing"
@@ -58,11 +30,7 @@ SHANGHAI_INDEX="shanghai"
 def embed_query(query: str) -> list[float]:
     """把用户查询转成向量"""
     model = ModelSingleton().get_model()
-    return model.encode(
-        query,
-        convert_to_numpy=True,
-        normalize_embeddings=True,   # 与入库时保持一致
-    ).tolist()
+    return model.encode(query, convert_to_numpy=True).tolist()
 
 def _format_hits(resp: dict) -> list[dict]:
     """把 OpenSearch 原始响应格式化成简洁的 dict 列表"""
@@ -79,27 +47,46 @@ def vector_search(
     query: str,
     k: int =5,
     index_name: str = None,
+    filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """
     向量检索：把 query embedding 出来，在 OpenSearch 里找最相似的 k 个 记录
     返回：list of dict
+
+    Args:
+        filter_clauses: 可选的硬过滤条件列表，每个元素是 OpenSearch bool.filter 子句
+            (e.g. [{"term": {"city.keyword": "北京"}}])
     """
     client = get_opensearch_client()
 
     query_vec = embed_query(query)
 
-    body = {
-        "size": k,
-        "query": {
-            "knn": {
-                "embedding": {
-                    "vector": query_vec,
-                    "k": k,
-                }
+    knn_clause = {
+        "knn": {
+            "embedding": {
+                "vector": query_vec,
+                "k": k,
             }
-        },
-        "_source": {"excludes": ["embedding"]},
+        }
     }
+
+    if filter_clauses:
+        body = {
+            "size": k,
+            "query": {
+                "bool": {
+                    "must": [knn_clause],
+                    "filter": filter_clauses,
+                }
+            },
+            "_source": {"excludes": ["embedding"]},
+        }
+    else:
+        body = {
+            "size": k,
+            "query": knn_clause,
+            "_source": {"excludes": ["embedding"]},
+        }
 
     resp = client.search(index=index_name, body=body)
     return _format_hits(resp)
@@ -109,23 +96,42 @@ def bm25_search(
         query: str,
         k: int = 5,
         index_name: str = None,
+        filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """
     BM25 关键词检索：text_for_embedding字段的全文匹配
+
+    Args:
+        filter_clauses: 可选的硬过滤条件列表
     """
     client = get_opensearch_client()
 
-    body = {
-        "size": k,
-        "query": {
-            "match": {
-                "text_for_embedding": {
-                    "query": query,
-                }
+    match_clause = {
+        "match": {
+            "text_for_embedding": {
+                "query": query,
             }
-        },
-        "_source": {"excludes": ["embedding"]},
+        }
     }
+
+    if filter_clauses:
+        body = {
+            "size": k,
+            "query": {
+                "bool": {
+                    "must": [match_clause],
+                    "filter": filter_clauses,
+                }
+            },
+            "_source": {"excludes": ["embedding"]},
+        }
+    else:
+        body = {
+            "size": k,
+            "query": match_clause,
+            "_source": {"excludes": ["embedding"]},
+        }
+
     resp = client.search(index=index_name, body=body)
     return _format_hits(resp)
 
@@ -136,39 +142,47 @@ def hybrid_search(
         vector_boost: float = 2.0,
         bm25_boost: float = 1.0,
         index_name: str = None,
+        filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """
     混合检索：向量 + BM25 并行，分数加权融合
+
+    Args:
+        filter_clauses: 可选的硬过滤条件列表 (e.g. [{"term": {"city.keyword": "北京"}}])
+            当提供时，这些条件作为 bool.filter 强制过滤，不会影响评分。
     """
     client = get_opensearch_client()
 
-
     query_vec = embed_query(query)
+
+    should_clauses = [
+        {
+            "knn": {
+                "embedding": {
+                    "vector": query_vec,
+                    "k": k * 4,  # 扩大召回池规模以稳定融合结果
+                    "boost": vector_boost,
+                }
+            }
+        },
+        {
+            "match": {
+                "text_for_embedding": {
+                    "query": query,
+                    "boost": bm25_boost,
+                }
+            }
+        }
+    ]
+
+    bool_query: dict = {"should": should_clauses}
+    if filter_clauses:
+        bool_query["filter"] = filter_clauses
 
     body = {
         "size": k,
         "query": {
-            "bool": {
-                "should": [
-                    {
-                        "knn": {
-                            "embedding": {
-                                "vector": query_vec,
-                                "k": k * 4,  # 扩大召回池规模以稳定融合结果
-                                "boost": vector_boost,
-                            }
-                        }
-                    },
-                    {
-                        "match": {
-                            "text_for_embedding": {
-                                "query": query,
-                                "boost": bm25_boost,
-                            }
-                        }
-                    }
-                ]
-            }
+            "bool": bool_query
         },
         "_source": {"excludes": ["embedding"]},
     }
@@ -191,6 +205,7 @@ class OpenSearchRetriever(BaseRetriever):
     vector_boost: float = 2.0
     bm25_boost: float = 1.0
     index_name: str | None = None
+    filter_clauses: list[dict] | None = None
 
     def _get_relevant_documents(
             self,
@@ -199,9 +214,9 @@ class OpenSearchRetriever(BaseRetriever):
             run_manager: CallbackManagerForRetrieverRun,
     ) -> list[Document]:
         if self.mode == "vector":
-            hits = vector_search(query, k=self.k, index_name=self.index_name)
+            hits = vector_search(query, k=self.k, index_name=self.index_name, filter_clauses=self.filter_clauses)
         elif self.mode == "bm25":
-            hits = bm25_search(query, k=self.k, index_name=self.index_name)
+            hits = bm25_search(query, k=self.k, index_name=self.index_name, filter_clauses=self.filter_clauses)
         elif self.mode == "hybrid":
             hits = hybrid_search(
                 query,
@@ -209,6 +224,7 @@ class OpenSearchRetriever(BaseRetriever):
                 vector_boost=self.vector_boost,
                 bm25_boost=self.bm25_boost,
                 index_name=self.index_name,
+                filter_clauses=self.filter_clauses,
             )
         else:
             raise ValueError(f"unknown mode: {self.mode}")
