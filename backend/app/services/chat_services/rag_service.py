@@ -171,7 +171,7 @@ async def _search_with_rewrite_and_rerank(
     """
     # --- Step 1: Query rewriting ---
     rewritten = await rewrite_query(query)
-    search_str = build_search_query(rewritten)
+    search_str = build_search_query(rewritten, original_query=query)
 
     logger.info(
         f"Query rewritten: is_specific={rewritten['is_specific']}, "
