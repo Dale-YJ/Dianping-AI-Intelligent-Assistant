@@ -109,10 +109,11 @@ User query: "{query}"
 
 Analyze the query and output a JSON object with these fields:
 - "is_specific": true if the query already contains concrete restaurant/cuisine names, false if it's abstract
+- "city": if the user specifies a Chinese city (北京/成都/广州/上海), output the city name in Chinese (e.g., "北京"); if they specify a US city, output the English name (e.g., "Philadelphia"); use null if no city is mentioned
 - "categories": list of actual categories to filter by (may be Chinese like "川菜" or English like "Italian" — use what matches the data; empty list if none match well)
 - "stars_min": minimum star rating (1.0-5.0, use null if no preference)
 - "stars_max": maximum star rating (1.0-5.0, null if no preference)
-- "keywords": 3-5 concrete search keywords — use the SAME LANGUAGE as the user's query (Chinese queries → Chinese keywords, English queries → English keywords). When the user mentions a city, include it in keywords. Examples: "烤鸭 北京", "火锅 成都 四川火锅", "quiet romantic candlelit Italian"
+- "keywords": 3-5 concrete search keywords — use the SAME LANGUAGE as the user's query. DO NOT include the city name in keywords (city is handled separately). Examples: "烤鸭 京菜", "火锅 四川火锅", "quiet romantic candlelit Italian"
 - "explanation": one short sentence explaining your reasoning
 
 Output ONLY the JSON object, nothing else."""
@@ -128,10 +129,11 @@ async def rewrite_query(query: str) -> dict[str, Any]:
     Returns:
         A dict with keys:
         - ``is_specific`` (bool): Whether the original query was already concrete
-        - ``categories`` (list[str]): Yelp categories to filter by
+        - ``city`` (str | None): Detected city name (Chinese or English), or None
+        - ``categories`` (list[str]): Categories to filter by
         - ``stars_min`` (float | None): Minimum star rating
         - ``stars_max`` (float | None): Maximum star rating
-        - ``keywords`` (list[str]): Concrete search keywords
+        - ``keywords`` (list[str]): Concrete search keywords (city excluded)
         - ``explanation`` (str): Human-readable reasoning
 
         On failure, returns a fallback dict that passes the original query
@@ -139,6 +141,7 @@ async def rewrite_query(query: str) -> dict[str, Any]:
     """
     fallback = {
         "is_specific": False,
+        "city": (extract_city_hints(query) or [None])[0],
         "categories": [],
         "stars_min": None,
         "stars_max": None,
@@ -173,14 +176,24 @@ async def rewrite_query(query: str) -> dict[str, Any]:
         result = json.loads(content)
 
         # Validate and normalize
-        return {
+        result = {
             "is_specific": bool(result.get("is_specific", False)),
+            "city": _normalize_city(result.get("city")),
             "categories": _normalize_list(result.get("categories", [])),
             "stars_min": _normalize_rating(result.get("stars_min")),
             "stars_max": _normalize_rating(result.get("stars_max")),
             "keywords": _normalize_list(result.get("keywords", [query])),
             "explanation": str(result.get("explanation", "")),
         }
+
+        # Safety net: if LLM didn't detect a city but the original query
+        # contains one, inject it from extract_city_hints
+        if not result["city"]:
+            hints = extract_city_hints(query)
+            if hints:
+                result["city"] = hints[0]  # take the first detected city
+
+        return result
 
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse query rewrite JSON: {e}, content={content[:200]}")
@@ -278,4 +291,19 @@ def _normalize_rating(value: Any) -> float | None:
             return v
     except (TypeError, ValueError):
         pass
+    return None
+
+
+def _normalize_city(value: Any) -> str | None:
+    """Ensure value is a valid known city name, or None."""
+    if not value or not isinstance(value, str):
+        return None
+    city = value.strip()
+    # Check if it's one of our known Chinese cities
+    for known in CHINESE_CITIES.values():
+        if city == known:
+            return city
+    # For non-Chinese cities, return the value as-is if it looks valid
+    if len(city) >= 2 and not city.startswith("null"):
+        return city
     return None

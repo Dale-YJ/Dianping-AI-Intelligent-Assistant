@@ -50,9 +50,18 @@ RERANK_CANDIDATE_MULTIPLIER = 4  # fetch top_k * N candidates, rerank, then trim
 RERANK_MIN_POOL_SIZE = 15        # minimum candidates before reranking
 
 
-def _search_businesses(query: str, top_k: int = 5, min_score: float = 0.3) -> list[dict]:
+def _search_businesses(
+    query: str,
+    top_k: int = 5,
+    min_score: float = 0.3,
+    filter_clauses: list[dict] | None = None,
+) -> list[dict]:
     """混合搜索商家，底层调 retrieve.hybrid_search，加 min_score 截断。"""
-    results = hybrid_search(query, k=max(top_k * 2, 10), index_name=BUSINESS_INDEX)
+    results = hybrid_search(
+        query, k=max(top_k * 2, 10),
+        index_name=BUSINESS_INDEX,
+        filter_clauses=filter_clauses,
+    )
     return [r for r in results if r.get("_score", 0) >= min_score][:top_k]
 
 
@@ -60,6 +69,7 @@ def _search_businesses_via_reviews(
     query: str,
     top_k: int = 10,
     min_score: float = 0.3,
+    filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """Search reviews for the query, then aggregate to unique businesses.
 
@@ -98,6 +108,7 @@ def _search_businesses_via_reviews(
             query,
             k=review_pool_size,
             index_name=REVIEW_INDEX,
+            filter_clauses=filter_clauses,
         )
     except Exception:
         logger.warning("Review search failed, skipping review-based discovery")
@@ -173,8 +184,15 @@ async def _search_with_rewrite_and_rerank(
     rewritten = await rewrite_query(query)
     search_str = build_search_query(rewritten, original_query=query)
 
+    # Build hard city filter — if user specified a city, force it in OpenSearch
+    city_filter = rewritten.get("city")
+    filter_clauses: list[dict] | None = None
+    if city_filter:
+        filter_clauses = [{"term": {"city.keyword": city_filter}}]
+
     logger.info(
         f"Query rewritten: is_specific={rewritten['is_specific']}, "
+        f"city={city_filter}, "
         f"categories={rewritten['categories']}, keywords={rewritten['keywords']}, "
         f"search_str={search_str[:120]}"
     )
@@ -188,12 +206,19 @@ async def _search_with_rewrite_and_rerank(
     # Path B: Review-based discovery (reviews → businesses)
     pool_size = max(top_k * RERANK_CANDIDATE_MULTIPLIER, RERANK_MIN_POOL_SIZE)
 
-    biz_from_direct = hybrid_search(search_str, k=pool_size, index_name=BUSINESS_INDEX)
+    biz_from_direct = hybrid_search(
+        search_str, k=pool_size,
+        index_name=BUSINESS_INDEX,
+        filter_clauses=filter_clauses,
+    )
     biz_from_direct = [r for r in biz_from_direct if r.get("_score", 0) >= min_score]
     for b in biz_from_direct:
         b["_match_source"] = "business"
 
-    biz_from_reviews = _search_businesses_via_reviews(search_str, top_k=pool_size)
+    biz_from_reviews = _search_businesses_via_reviews(
+        search_str, top_k=pool_size,
+        filter_clauses=filter_clauses,
+    )
 
     # Merge: review-discovered businesses first (more relevant for abstract queries),
     # then direct matches. Deduplicate by business_id.

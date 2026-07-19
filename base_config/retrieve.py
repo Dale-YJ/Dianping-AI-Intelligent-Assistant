@@ -41,27 +41,46 @@ def vector_search(
     query: str,
     k: int =5,
     index_name: str = None,
+    filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """
     向量检索：把 query embedding 出来，在 OpenSearch 里找最相似的 k 个 记录
     返回：list of dict
+
+    Args:
+        filter_clauses: 可选的硬过滤条件列表，每个元素是 OpenSearch bool.filter 子句
+            (e.g. [{"term": {"city.keyword": "北京"}}])
     """
     client = get_opensearch_client()
 
     query_vec = embed_query(query)
 
-    body = {
-        "size": k,
-        "query": {
-            "knn": {
-                "embedding": {
-                    "vector": query_vec,
-                    "k": k,
-                }
+    knn_clause = {
+        "knn": {
+            "embedding": {
+                "vector": query_vec,
+                "k": k,
             }
-        },
-        "_source": {"excludes": ["embedding"]},
+        }
     }
+
+    if filter_clauses:
+        body = {
+            "size": k,
+            "query": {
+                "bool": {
+                    "must": [knn_clause],
+                    "filter": filter_clauses,
+                }
+            },
+            "_source": {"excludes": ["embedding"]},
+        }
+    else:
+        body = {
+            "size": k,
+            "query": knn_clause,
+            "_source": {"excludes": ["embedding"]},
+        }
 
     resp = client.search(index=index_name, body=body)
     return _format_hits(resp)
@@ -71,23 +90,42 @@ def bm25_search(
         query: str,
         k: int = 5,
         index_name: str = None,
+        filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """
     BM25 关键词检索：text_for_embedding字段的全文匹配
+
+    Args:
+        filter_clauses: 可选的硬过滤条件列表
     """
     client = get_opensearch_client()
 
-    body = {
-        "size": k,
-        "query": {
-            "match": {
-                "text_for_embedding": {
-                    "query": query,
-                }
+    match_clause = {
+        "match": {
+            "text_for_embedding": {
+                "query": query,
             }
-        },
-        "_source": {"excludes": ["embedding"]},
+        }
     }
+
+    if filter_clauses:
+        body = {
+            "size": k,
+            "query": {
+                "bool": {
+                    "must": [match_clause],
+                    "filter": filter_clauses,
+                }
+            },
+            "_source": {"excludes": ["embedding"]},
+        }
+    else:
+        body = {
+            "size": k,
+            "query": match_clause,
+            "_source": {"excludes": ["embedding"]},
+        }
+
     resp = client.search(index=index_name, body=body)
     return _format_hits(resp)
 
@@ -98,39 +136,47 @@ def hybrid_search(
         vector_boost: float = 2.0,
         bm25_boost: float = 1.0,
         index_name: str = None,
+        filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """
     混合检索：向量 + BM25 并行，分数加权融合
+
+    Args:
+        filter_clauses: 可选的硬过滤条件列表 (e.g. [{"term": {"city.keyword": "北京"}}])
+            当提供时，这些条件作为 bool.filter 强制过滤，不会影响评分。
     """
     client = get_opensearch_client()
 
-
     query_vec = embed_query(query)
+
+    should_clauses = [
+        {
+            "knn": {
+                "embedding": {
+                    "vector": query_vec,
+                    "k": k * 4,  # 扩大召回池规模以稳定融合结果
+                    "boost": vector_boost,
+                }
+            }
+        },
+        {
+            "match": {
+                "text_for_embedding": {
+                    "query": query,
+                    "boost": bm25_boost,
+                }
+            }
+        }
+    ]
+
+    bool_query: dict = {"should": should_clauses}
+    if filter_clauses:
+        bool_query["filter"] = filter_clauses
 
     body = {
         "size": k,
         "query": {
-            "bool": {
-                "should": [
-                    {
-                        "knn": {
-                            "embedding": {
-                                "vector": query_vec,
-                                "k": k * 4,  # 扩大召回池规模以稳定融合结果
-                                "boost": vector_boost,
-                            }
-                        }
-                    },
-                    {
-                        "match": {
-                            "text_for_embedding": {
-                                "query": query,
-                                "boost": bm25_boost,
-                            }
-                        }
-                    }
-                ]
-            }
+            "bool": bool_query
         },
         "_source": {"excludes": ["embedding"]},
     }
@@ -153,6 +199,7 @@ class OpenSearchRetriever(BaseRetriever):
     vector_boost: float = 2.0
     bm25_boost: float = 1.0
     index_name: str | None = None
+    filter_clauses: list[dict] | None = None
 
     def _get_relevant_documents(
             self,
@@ -161,9 +208,9 @@ class OpenSearchRetriever(BaseRetriever):
             run_manager: CallbackManagerForRetrieverRun,
     ) -> list[Document]:
         if self.mode == "vector":
-            hits = vector_search(query, k=self.k, index_name=self.index_name)
+            hits = vector_search(query, k=self.k, index_name=self.index_name, filter_clauses=self.filter_clauses)
         elif self.mode == "bm25":
-            hits = bm25_search(query, k=self.k, index_name=self.index_name)
+            hits = bm25_search(query, k=self.k, index_name=self.index_name, filter_clauses=self.filter_clauses)
         elif self.mode == "hybrid":
             hits = hybrid_search(
                 query,
@@ -171,6 +218,7 @@ class OpenSearchRetriever(BaseRetriever):
                 vector_boost=self.vector_boost,
                 bm25_boost=self.bm25_boost,
                 index_name=self.index_name,
+                filter_clauses=self.filter_clauses,
             )
         else:
             raise ValueError(f"unknown mode: {self.mode}")
