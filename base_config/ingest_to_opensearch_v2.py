@@ -17,21 +17,20 @@ BASE_DIR = os.path.dirname(current_script_dir)
 DATA_DIR = os.path.join(BASE_DIR, "knowledge_base", "small_data")
 
 #数据文件名
-BUSINESS_FILE = os.path.join(DATA_DIR, "small_business.json")
-REVIEW_FILE = os.path.join(DATA_DIR, "small_review.json")
-CHECKIN_FILE = os.path.join(DATA_DIR, "small_checkin.json")
-TIP_FILE = os.path.join(DATA_DIR, "small_tip.json")
-USER_FILE = os.path.join(DATA_DIR, "small_user.json")
+CHENGDU_FILE = os.path.join(DATA_DIR, "chengdu.json")
+BEIJING_FILE = os.path.join(DATA_DIR, "beijing.json")
+GUANGZHOU_FILE = os.path.join(DATA_DIR, "guangzhou.json")
+SHANGHAI_FILE= os.path.join(DATA_DIR, "shanghai.json")
 
 # 索引名称
-BUSINESS_INDEX = "yelp_business"
-REVIEW_INDEX = "yelp_review"
-CHECKIN_INDEX="yelp_checkin"
-TIP_INDEX="yelp_tip"
-USER_INDEX="yelp_user"
+BEIJING_INDEX="beijing"
+CHENGDU_INDEX="chengdu"
+GUANGZHOU_INDEX="guangzhou"
+SHANGHAI_INDEX="shanghai"
+
 
 # 向量维度 (BAAI/bge-base-zh-v1.5 模型)
-VECTOR_DIM = settings.vector_dim
+VECTOR_DIM = 768
 
 # 批量处理大小（写入 OpenSearch 的批次大小）
 BATCH_SIZE = 500
@@ -159,18 +158,6 @@ def create_knn_index(client, index_name):
     print(f"✅ 创建 KNN 索引: {index_name}")
 
 
-def _resolve_doc_id(doc: dict, index_name: str) -> str | None:
-    """根据索引类型解析文档 ID"""
-    id_field_map = {
-        BUSINESS_INDEX: "business_id",
-        REVIEW_INDEX: "review_id",
-        CHECKIN_INDEX: "business_id",
-        TIP_INDEX: "user_id",
-        USER_INDEX: "user_id",
-    }
-    field = id_field_map.get(index_name, "business_id")
-    return doc.get(field)
-
 
 
 def bulk_import(client, file_path, index_name):
@@ -184,23 +171,18 @@ def bulk_import(client, file_path, index_name):
     # ═══════════════════════════════════════════════════════════
     # 第一阶段：读取文件，解析 JSON，准备待编码文本
     # ═══════════════════════════════════════════════════════════
-    documents: list[tuple[dict, str, str | None]] = []  # (doc, text, doc_id)
+    documents: list[tuple[dict, str,str| None]] = []  # (doc, text, doc_id)
     parse_errors = 0
 
     print(f"   📖 读取并解析 JSON 文件...")
     with open(file_path, 'r', encoding='utf-8') as f:
-        for line_num, line in enumerate(f, 1):
-            try:
-                doc = json.loads(line.strip())
-                text = traverse_json(doc)
-                doc_id = _resolve_doc_id(doc, index_name)
-                documents.append((doc, text, doc_id))
-            except json.JSONDecodeError as e:
-                print(f"   ⚠️ 第{line_num}行 JSON 解析错误: {e}")
-                parse_errors += 1
-            except Exception as e:
-                print(f"   ⚠️ 第{line_num}行处理出错: {e}")
-                parse_errors += 1
+        docs = json.load(f)
+        for doc in docs:
+            text=traverse_json(doc)
+            doc_id=doc.get("keyword")
+            documents.append((doc, text,doc_id))
+
+
 
     total_count = len(documents)
     if total_count == 0:
@@ -214,7 +196,7 @@ def bulk_import(client, file_path, index_name):
     # ═══════════════════════════════════════════════════════════
     # 第二阶段：批量编码（关键优化！一次性批量推理）
     # ═══════════════════════════════════════════════════════════
-    all_texts = [text for _, text, _ in documents]
+    all_texts = [text for _, text,_ in documents]
     print(f"   🔢 开始批量编码 {total_count} 条文本 "
           f"(encoding_batch={ENCODING_BATCH_SIZE})...")
     encode_start = time.time()
@@ -239,14 +221,14 @@ def bulk_import(client, file_path, index_name):
     batch_actions: list[dict] = []
     write_start = time.time()
 
-    for idx, (doc, text, doc_id) in enumerate(documents):
+    for idx, (doc, text,doc_id) in enumerate(documents):
         # 把向量填入文档
         doc["embedding"] = convert_vector_to_list(all_embeddings[idx])
         doc["text_for_embedding"] = text
 
         action = {
             "_index": index_name,
-            "_id": doc_id,
+            "_id":doc_id,
             "_source": doc,
         }
         batch_actions.append(action)
@@ -299,7 +281,7 @@ def verify_data(client):
     print("\n🔍 验证导入结果...")
 
     # 检查索引是否存在
-    for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
+    for index_name in [BEIJING_INDEX, CHENGDU_INDEX,GUANGZHOU_INDEX,SHANGHAI_INDEX]:
         if client.indices.exists(index=index_name):
             count = client.count(index=index_name)['count']
             print(f"   {index_name}: {count}条记录")
@@ -307,7 +289,7 @@ def verify_data(client):
     # 随机查询几条数据
     print("\n   随机查询商家示例:")
     res = client.search(
-        index=BUSINESS_INDEX,
+        index=BEIJING_INDEX,
         body={
             "size": 3,
             "query": {"match_all": {}}
@@ -316,10 +298,10 @@ def verify_data(client):
 
     for hit in res["hits"]["hits"]:
         source = hit["_source"]
-        name = source.get("name", "N/A")
-        city = source.get("city", "N/A")
-        stars = source.get("stars", "N/A")
-        print(f"   - {name} ({city}) ★{stars}")
+        name = source.get("餐厅名称", "N/A")
+        type = source.get("菜系", "N/A")
+        stars = source.get("综合评分", "N/A")
+        print(f"   - {name} ({type}) ★{stars}")
 
 
 
@@ -335,66 +317,53 @@ def main():
         return
 
     # 检查数据文件
-    if not os.path.exists(BUSINESS_FILE):
-        print(f"❌ 找不到商家数据文件: {BUSINESS_FILE}")
-        print("   请先运行 prepare_data.py")
+    if not os.path.exists(BEIJING_FILE):
+        print(f"❌ 找不到北京的数据文件: {BEIJING_FILE}")
+
         return
-    if not os.path.exists(REVIEW_FILE):
-        print(f"❌ 找不到评论数据文件: {REVIEW_FILE}")
-        print("   请先运行 prepare_data.py")
+    if not os.path.exists(CHENGDU_FILE):
+        print(f"❌ 找不到成都数据文件: {CHENGDU_FILE}")
         return
-    if not os.path.exists(CHECKIN_FILE):
-        print(f"❌ 找不到登录数据文件: {CHECKIN_FILE}")
-        print("   请先运行 prepare_data.py")
+    if not os.path.exists(GUANGZHOU_FILE):
+        print(f"❌ 找不到广州数据文件: {GUANGZHOU_FILE}")
         return
-    if not os.path.exists(TIP_FILE):
-        print(f"❌ 找不到tip数据文件: {TIP_FILE}")
-        print("   请先运行 prepare_data.py")
+    if not os.path.exists(SHANGHAI_FILE):
+        print(f"❌ 找不到tip数据文件: {SHANGHAI_FILE}")
         return
-    if not os.path.exists(USER_FILE):
-        print(f"❌ 找不到user数据文件: {USER_FILE}")
-        print("   请先运行 prepare_data.py")
-        return
+
 
     print(f"\n数据文件检查通过:")
 
     # 导入商家数据
     bulk_import(
         client=client,
-        file_path=BUSINESS_FILE,
-        index_name=BUSINESS_INDEX,
+        file_path=BEIJING_FILE,
+        index_name=BEIJING_INDEX,
     )
     # # 导入评论数据
     bulk_import(
         client=client,
-        file_path=REVIEW_FILE,
-        index_name=REVIEW_INDEX,
+        file_path=CHENGDU_FILE,
+        index_name=CHENGDU_INDEX,
     )
     bulk_import(
         client=client,
-        file_path=CHECKIN_FILE,
-        index_name=CHECKIN_INDEX,
+        file_path=GUANGZHOU_FILE,
+        index_name=GUANGZHOU_INDEX,
     )
     bulk_import(
         client=client,
-        file_path=TIP_FILE,
-        index_name=TIP_INDEX,
+        file_path=SHANGHAI_FILE,
+        index_name=SHANGHAI_INDEX,
     )
-    bulk_import(
-        client=client,
-        file_path=USER_FILE,
-        index_name=USER_INDEX,
-    )
+
     # 验证数据
     verify_data(client)
 
     print("\n" + "=" * 60)
     print("🎉🎉🎉 数据导入完成!")
     print("=" * 60)
-    print("\n下一步建议:")
-    print("1. 打开浏览器访问 http://localhost:5601 (Kibana)")
-    print("2. 在Dev Tools中执行: GET yelp_business/_search")
-    print("3. 开始开发你的RAG查询功能!")
+
 
 
 if __name__ == "__main__":

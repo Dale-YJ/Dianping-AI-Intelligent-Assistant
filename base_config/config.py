@@ -26,9 +26,9 @@ class Settings(BaseSettings):
 
     # models relative path
 
-    embedding_model_path: str = "models/all-MiniLM-L6-v2"
+    embedding_model_path: str = "models/bge-base-zh-v1.5"
     rerank_model_path: str = "models/bge-reranker-v2-m3"
-    vector_dim: int = 384
+    vector_dim: int = 768
 
 
     # Redis

@@ -15,6 +15,12 @@ CHECKIN_INDEX="yelp_checkin"
 TIP_INDEX="yelp_tip"
 USER_INDEX="yelp_user"
 
+BEIJING_INDEX="beijing"
+CHENGDU_INDEX="chengdu"
+GUANGZHOU_INDEX="guangzhou"
+SHANGHAI_INDEX="shanghai"
+
+
 def embed_query(query: str) -> list[float]:
     """把用户查询转成向量"""
     model = ModelSingleton().get_model()
@@ -211,9 +217,9 @@ def get_retriever(
 
 if __name__ == "__main__":
     # 用默认混合检索
-    retriever = get_retriever(k=2,index_name=BUSINESS_INDEX)
+    retriever = get_retriever(k=2,index_name=BEIJING_INDEX)
 
-    docs = retriever.invoke("Chinese food")
+    docs = retriever.invoke("我想要吃川菜")
     for doc in docs:
         print(doc)
         print(type(doc))
