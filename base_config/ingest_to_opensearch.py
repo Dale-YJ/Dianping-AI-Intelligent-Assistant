@@ -6,17 +6,18 @@ import json
 import os
 import time
 import threading
+import torch
 from opensearch_client import get_opensearch_client
 from config import settings
 
 # 当前文件路径
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
-#项目的根路径
+# 项目的根路径
 BASE_DIR = os.path.dirname(current_script_dir)
-#数据的路径
+# 数据的路径
 DATA_DIR = os.path.join(BASE_DIR, "knowledge_base", "small_data")
 
-#数据文件名
+# 数据文件名
 BUSINESS_FILE = os.path.join(DATA_DIR, "small_business.json")
 REVIEW_FILE = os.path.join(DATA_DIR, "small_review.json")
 CHECKIN_FILE = os.path.join(DATA_DIR, "small_checkin.json")
@@ -26,9 +27,9 @@ USER_FILE = os.path.join(DATA_DIR, "small_user.json")
 # 索引名称
 BUSINESS_INDEX = "yelp_business"
 REVIEW_INDEX = "yelp_review"
-CHECKIN_INDEX="yelp_checkin"
-TIP_INDEX="yelp_tip"
-USER_INDEX="yelp_user"
+CHECKIN_INDEX = "yelp_checkin"
+TIP_INDEX = "yelp_tip"
+USER_INDEX = "yelp_user"
 
 # 向量维度 (BAAI/bge-base-zh-v1.5 模型)
 VECTOR_DIM = settings.vector_dim
@@ -92,40 +93,27 @@ class ModelSingleton:
         return cls._model
 
 
-def traverse_json(data,prefix="", result=""):
-    """
-    递归遍历JSON数据，将所有字段内容拼接到字符串中
-
-    Args:
-        data: JSON数据（dict, list, str, int, float, bool, None）
-        result_str: 累积的结果字符串
-
-    Returns:
-        str: 拼接后的字符串
-    """
+def traverse_json(data, prefix="", result=""):
+    """递归遍历JSON数据，将所有字段内容拼接到字符串中"""
     if isinstance(data, dict):
         for key, value in data.items():
             new_prefix = f"{prefix}.{key}" if prefix else key
             result = traverse_json(value, new_prefix, result)
-
     elif isinstance(data, list):
         for idx, item in enumerate(data):
             new_prefix = f"{prefix}[{idx}]"
             result = traverse_json(item, new_prefix, result)
-
     else:
-        # 基本类型：拼接 key: value
         result += f"{prefix}: {data}\n"
-
     return result
 
+
 def convert_vector_to_list(vector):
-    """
-    将numpy数组转换为Python列表（OpenSearch需要）
-    """
+    """将numpy数组转换为Python列表（OpenSearch需要）"""
     if isinstance(vector, np.ndarray):
         return vector.tolist()
     return vector
+
 
 def create_knn_index(client, index_name):
     if client.indices.exists(index=index_name):
@@ -268,6 +256,7 @@ def bulk_import(client, file_path, index_name):
                   f"失败: {error_count} | 速率: {rate:.0f} 条/秒")
 
             batch_actions = []
+            batch_actions = []
 
     # 处理剩余的数据
     if batch_actions:
@@ -298,20 +287,18 @@ def verify_data(client):
     """验证导入的数据"""
     print("\n🔍 验证导入结果...")
 
-    # 检查索引是否存在
-    for index_name in [BUSINESS_INDEX, REVIEW_INDEX,CHECKIN_INDEX,TIP_INDEX,USER_INDEX]:
+    for index_name in [BUSINESS_INDEX, REVIEW_INDEX, CHECKIN_INDEX, TIP_INDEX, USER_INDEX]:
         if client.indices.exists(index=index_name):
-            count = client.count(index=index_name)['count']
+            count = client.count(index=index_name)["count"]
             print(f"   {index_name}: {count}条记录")
 
-    # 随机查询几条数据
     print("\n   随机查询商家示例:")
     res = client.search(
         index=BUSINESS_INDEX,
         body={
             "size": 3,
             "query": {"match_all": {}}
-        }
+        },
     )
 
     for hit in res["hits"]["hits"]:
@@ -322,70 +309,43 @@ def verify_data(client):
         print(f"   - {name} ({city}) ★{stars}")
 
 
-
 def main():
     print("=" * 60)
-    print("Yelp数据导入OpenSearch工具")
+    print("Yelp数据导入OpenSearch工具 (GPU加速版)")
     print("=" * 60)
 
-    # 连接OpenSearch
     client = get_opensearch_client()
     if not client:
         print("❌ 无法连接到OpenSearch，请检查服务是否启动")
         return
 
     # 检查数据文件
-    if not os.path.exists(BUSINESS_FILE):
-        print(f"❌ 找不到商家数据文件: {BUSINESS_FILE}")
-        print("   请先运行 prepare_data.py")
-        return
-    if not os.path.exists(REVIEW_FILE):
-        print(f"❌ 找不到评论数据文件: {REVIEW_FILE}")
-        print("   请先运行 prepare_data.py")
-        return
-    if not os.path.exists(CHECKIN_FILE):
-        print(f"❌ 找不到登录数据文件: {CHECKIN_FILE}")
-        print("   请先运行 prepare_data.py")
-        return
-    if not os.path.exists(TIP_FILE):
-        print(f"❌ 找不到tip数据文件: {TIP_FILE}")
-        print("   请先运行 prepare_data.py")
-        return
-    if not os.path.exists(USER_FILE):
-        print(f"❌ 找不到user数据文件: {USER_FILE}")
-        print("   请先运行 prepare_data.py")
-        return
+    data_files = {
+        BUSINESS_FILE: "商家",
+        REVIEW_FILE: "评论",
+        CHECKIN_FILE: "签到",
+        TIP_FILE: "Tip",
+        USER_FILE: "用户",
+    }
+    for file_path, name in data_files.items():
+        if not os.path.exists(file_path):
+            print(f"❌ 找不到{name}数据文件: {file_path}")
+            print("   请先运行 prepare_data.py")
+            return
+    print(f"\n✅ 数据文件检查通过")
 
-    print(f"\n数据文件检查通过:")
+    # 逐个导入
+    file_index_map = [
+        (BUSINESS_FILE, BUSINESS_INDEX),
+        (REVIEW_FILE, REVIEW_INDEX),
+        (CHECKIN_FILE, CHECKIN_INDEX),
+        (TIP_FILE, TIP_INDEX),
+        (USER_FILE, USER_INDEX),
+    ]
 
-    # 导入商家数据
-    bulk_import(
-        client=client,
-        file_path=BUSINESS_FILE,
-        index_name=BUSINESS_INDEX,
-    )
-    # # 导入评论数据
-    bulk_import(
-        client=client,
-        file_path=REVIEW_FILE,
-        index_name=REVIEW_INDEX,
-    )
-    bulk_import(
-        client=client,
-        file_path=CHECKIN_FILE,
-        index_name=CHECKIN_INDEX,
-    )
-    bulk_import(
-        client=client,
-        file_path=TIP_FILE,
-        index_name=TIP_INDEX,
-    )
-    bulk_import(
-        client=client,
-        file_path=USER_FILE,
-        index_name=USER_INDEX,
-    )
-    # 验证数据
+    for file_path, index_name in file_index_map:
+        bulk_import(client=client, file_path=file_path, index_name=index_name)
+
     verify_data(client)
 
     print("\n" + "=" * 60)
@@ -394,7 +354,6 @@ def main():
     print("\n下一步建议:")
     print("1. 打开浏览器访问 http://localhost:5601 (Kibana)")
     print("2. 在Dev Tools中执行: GET yelp_business/_search")
-    print("3. 开始开发你的RAG查询功能!")
 
 
 if __name__ == "__main__":
