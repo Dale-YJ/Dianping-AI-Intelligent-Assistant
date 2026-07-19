@@ -175,6 +175,10 @@ async def api_businesses_with_reviews(
         # 格式化输出
         formatted_items = []
         for biz in items:
+            # 国内数据有 image_url，Yelp 数据没有
+            photos = biz.get("photos") if isinstance(biz.get("photos"), list) else []
+            if not photos and biz.get("image_url"):
+                photos = [biz["image_url"]]
             formatted_items.append({
                 "business_id": biz.get("business_id", ""),
                 "name": biz.get("name", ""),
@@ -185,8 +189,9 @@ async def api_businesses_with_reviews(
                 "longitude": biz.get("longitude", 0),
                 "rating": biz.get("stars", 0),
                 "review_count": biz.get("review_count", 0),
-                "real_review_count": biz.get("real_review_count", 0),  # 真实评价数量
+                "real_review_count": biz.get("real_review_count", 0),
                 "categories": biz.get("categories", "").split(", ") if biz.get("categories") else [],
+                "photos": photos,
             })
 
         return make_response(0, {
