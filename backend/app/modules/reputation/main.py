@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.llm_client import get_llm
         llm = get_llm()
-        model_name = getattr(llm, "_model_name", "unknown")
+        model_name = getattr(llm, "model_name", "unknown")
         print(f"  LLM ready: {model_name}")
     except Exception as e:
         print(f"  LLM not ready: {e}")

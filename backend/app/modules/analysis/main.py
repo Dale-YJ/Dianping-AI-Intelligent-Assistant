@@ -13,11 +13,19 @@ from app.core.config import settings
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown."""
+    # Ensure user_review index exists
+    try:
+        from app.services.analysis_services.review_service import ensure_user_review_index
+        ensure_user_review_index()
+        print("  User review index ready")
+    except Exception as e:
+        print(f"  User review index check failed: {e}")
+
     # Test LLM connection
     try:
         from app.services.llm_client import get_llm
         llm = get_llm()
-        model_name = getattr(llm, "_model_name", "unknown")
+        model_name = getattr(llm, "model_name", "unknown")
         print(f"  LLM ready: {model_name}")
     except Exception as e:
         print(f"  LLM not ready: {e}")

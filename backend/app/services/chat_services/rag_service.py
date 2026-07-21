@@ -7,12 +7,15 @@ This module ties together the separated concerns:
 - ``search_service`` — OpenSearch retrieval
 - ``query_rewriter`` — LLM-based query → concrete search conditions
 - ``reranker`` — embedding-similarity re-ranking (bge-base-zh-v1.5)
+- ``user_profile`` — user preference learning from conversation history
 
 Pipeline (updated):
-    1. User query → rewrite_query() → concrete keywords + categories
-    2. hybrid_search() with expanded candidate pool
-    3. rerank() with bge-reranker-v2-m3 cross-encoder
-    4. build_context() → LLM streaming → recommendations
+    1. Load user profile from conversation history
+    2. User query → rewrite_query() → concrete keywords + categories
+    3. hybrid_search() with expanded candidate pool
+    4. rerank() with bge-reranker-v2-m3 cross-encoder
+    5. build_context() → LLM streaming → recommendations
+    6. Analyze conversation → update user profile
 """
 
 from __future__ import annotations
@@ -34,6 +37,11 @@ from .prompts import (
     build_user_prompt,
 )
 from .query_rewriter import rewrite_query, build_search_query
+from .user_profile import (
+    get_user_profile,
+    format_profile_for_prompt,
+)
+from .profile_analyzer import analyze_conversation_for_profile
 
 # 统一使用 base_config 的 OpenSearch 客户端和检索接口
 from opensearch_client import get_opensearch_client
@@ -45,14 +53,60 @@ logger = logging.getLogger(__name__)
 BUSINESS_INDEX = "yelp_business"
 REVIEW_INDEX = "yelp_review"
 
+# ── Cuisine alias mapping ───────────────────────────────────
+# Common abbreviations → full cuisine names found in actual data.
+# Used by _apply_cuisine_boost() to match user intent with
+# business categories when there's a semantic gap.
+
+CUISINE_ALIASES: dict[str, list[str]] = {
+    "日料": ["日本料理", "日式料理", "日料"],
+    "韩料": ["韩式料理", "韩国料理", "韩式烤肉"],
+    "川菜": ["川菜", "川菜馆", "四川菜", "四川火锅"],
+    "湘菜": ["湘菜", "湖南菜"],
+    "粤菜": ["粤菜", "粤菜馆", "广东菜", "粤式茶点", "茶餐厅"],
+    "火锅": ["火锅", "四川火锅", "老北京火锅", "火锅自助", "川味火锅"],
+    "烤鸭": ["烤鸭", "京菜"],
+    "面馆": ["面馆", "面", "粉面馆", "重庆小面"],
+    "西餐": ["西餐", "意大利菜", "法国菜"],
+    "烧烤": ["烧烤", "烤肉"],
+    "本帮菜": ["本帮菜", "上海菜"],
+    "云南菜": ["云南菜", "滇菜"],
+    "新疆菜": ["新疆菜"],
+    "苏浙菜": ["苏浙菜", "淮扬菜", "江浙菜", "浙菜"],
+    "鲁菜": ["鲁菜"],
+    "素食": ["素食", "素菜"],
+    "潮汕菜": ["潮汕菜", "潮州菜"],
+    "内蒙菜": ["内蒙菜"],
+    "私房菜": ["私房菜"],
+    "农家菜": ["农家菜"],
+    "小吃": ["小吃", "快餐简餐", "粉面馆"],
+    "海鲜": ["海鲜", "海鲜火锅"],
+    "自助": ["自助", "自助餐", "火锅自助"],
+    "咖啡": ["咖啡", "咖啡厅", "面包甜点"],
+    "甜品": ["甜品", "面包甜点", "蛋糕", "冰淇淋"],
+}
+
+# Boost multipliers
+CUISINE_MATCH_BOOST = 2.0     # score multiplier when cuisine matches
+CUISINE_MISMATCH_PENALTY = 0.5  # score multiplier when cuisine requested but no match
+
 # Reranker settings
 RERANK_CANDIDATE_MULTIPLIER = 4  # fetch top_k * N candidates, rerank, then trim
 RERANK_MIN_POOL_SIZE = 15        # minimum candidates before reranking
 
 
-def _search_businesses(query: str, top_k: int = 5, min_score: float = 0.3) -> list[dict]:
+def _search_businesses(
+    query: str,
+    top_k: int = 5,
+    min_score: float = 0.3,
+    filter_clauses: list[dict] | None = None,
+) -> list[dict]:
     """混合搜索商家，底层调 retrieve.hybrid_search，加 min_score 截断。"""
-    results = hybrid_search(query, k=max(top_k * 2, 10), index_name=BUSINESS_INDEX)
+    results = hybrid_search(
+        query, k=max(top_k * 2, 10),
+        index_name=BUSINESS_INDEX,
+        filter_clauses=filter_clauses,
+    )
     return [r for r in results if r.get("_score", 0) >= min_score][:top_k]
 
 
@@ -60,6 +114,7 @@ def _search_businesses_via_reviews(
     query: str,
     top_k: int = 10,
     min_score: float = 0.3,
+    filter_clauses: list[dict] | None = None,
 ) -> list[dict]:
     """Search reviews for the query, then aggregate to unique businesses.
 
@@ -98,6 +153,7 @@ def _search_businesses_via_reviews(
             query,
             k=review_pool_size,
             index_name=REVIEW_INDEX,
+            filter_clauses=filter_clauses,
         )
     except Exception:
         logger.warning("Review search failed, skipping review-based discovery")
@@ -149,6 +205,99 @@ def _search_businesses_via_reviews(
     return businesses
 
 
+# ═══════════════════════════════════════════════════════════════
+# Cuisine boost — post-search score adjustment
+# ═══════════════════════════════════════════════════════════════
+
+def _detect_cuisine_intent(query: str, rewritten_categories: list[str]) -> list[str]:
+    """Detect which cuisine aliases the user is asking about.
+
+    Checks both the original query and the LLM-rewritten categories against
+    CUISINE_ALIASES keys. Returns the set of alias group keys that match
+    (e.g. ``["日料", "川菜"]``).
+
+    Args:
+        query: The original user query.
+        rewritten_categories: Categories extracted by the query rewriter.
+
+    Returns:
+        List of matched alias keys, or empty list if no cuisine intent detected.
+    """
+    matched: list[str] = []
+    combined = query + " " + " ".join(rewritten_categories)
+    for alias_key in CUISINE_ALIASES:
+        if alias_key in combined:
+            matched.append(alias_key)
+    # Also check full-form aliases in the query (e.g. user typed "日本料理" directly)
+    if not matched:
+        for alias_key, aliases in CUISINE_ALIASES.items():
+            for full_form in aliases:
+                if full_form in combined:
+                    matched.append(alias_key)
+                    break
+    return matched
+
+
+def _apply_cuisine_boost(
+    candidates: list[dict],
+    cuisine_keys: list[str],
+) -> list[dict]:
+    """Apply cuisine match boost / mismatch penalty to candidate scores.
+
+    For each candidate, checks whether its ``categories`` field contains
+    any of the full-form aliases for the detected cuisine intent. Matching
+    candidates get their ``_score`` multiplied by ``CUISINE_MATCH_BOOST``;
+    non-matching candidates get ``CUISINE_MISMATCH_PENALTY``.
+
+    If ``cuisine_keys`` is empty (no cuisine intent detected), candidates
+    are returned unchanged.
+
+    Args:
+        candidates: Business documents from search, each with ``_score``.
+        cuisine_keys: Alias keys detected by :func:`_detect_cuisine_intent`.
+
+    Returns:
+        Candidates with adjusted ``_score`` values, re-sorted descending.
+    """
+    if not cuisine_keys or not candidates:
+        return candidates
+
+    # Collect all full-form category names for the matched aliases
+    target_categories: set[str] = set()
+    for key in cuisine_keys:
+        aliases = CUISINE_ALIASES.get(key, [])
+        target_categories.update(aliases)
+
+    logger.info(
+        f"Cuisine boost: intent={cuisine_keys}, "
+        f"target_categories={target_categories}"
+    )
+
+    for doc in candidates:
+        doc_categories = doc.get("categories", "")
+        matched = any(
+            cat in doc_categories
+            for cat in target_categories
+        )
+        if matched:
+            doc["_score"] *= CUISINE_MATCH_BOOST
+            doc["_cuisine_match"] = True
+        else:
+            doc["_score"] *= CUISINE_MISMATCH_PENALTY
+            doc["_cuisine_match"] = False
+
+    # Re-sort by adjusted score
+    candidates.sort(key=lambda d: d.get("_score", 0), reverse=True)
+
+    boost_stats = {
+        "matched": sum(1 for d in candidates if d.get("_cuisine_match")),
+        "penalized": sum(1 for d in candidates if not d.get("_cuisine_match")),
+    }
+    logger.info(f"Cuisine boost applied: {boost_stats}")
+
+    return candidates
+
+
 async def _search_with_rewrite_and_rerank(
     query: str,
     top_k: int = 5,
@@ -173,8 +322,15 @@ async def _search_with_rewrite_and_rerank(
     rewritten = await rewrite_query(query)
     search_str = build_search_query(rewritten, original_query=query)
 
+    # Build hard city filter — if user specified a city, force it in OpenSearch
+    city_filter = rewritten.get("city")
+    filter_clauses: list[dict] | None = None
+    if city_filter:
+        filter_clauses = [{"term": {"city.keyword": city_filter}}]
+
     logger.info(
         f"Query rewritten: is_specific={rewritten['is_specific']}, "
+        f"city={city_filter}, "
         f"categories={rewritten['categories']}, keywords={rewritten['keywords']}, "
         f"search_str={search_str[:120]}"
     )
@@ -188,12 +344,19 @@ async def _search_with_rewrite_and_rerank(
     # Path B: Review-based discovery (reviews → businesses)
     pool_size = max(top_k * RERANK_CANDIDATE_MULTIPLIER, RERANK_MIN_POOL_SIZE)
 
-    biz_from_direct = hybrid_search(search_str, k=pool_size, index_name=BUSINESS_INDEX)
+    biz_from_direct = hybrid_search(
+        search_str, k=pool_size,
+        index_name=BUSINESS_INDEX,
+        filter_clauses=filter_clauses,
+    )
     biz_from_direct = [r for r in biz_from_direct if r.get("_score", 0) >= min_score]
     for b in biz_from_direct:
         b["_match_source"] = "business"
 
-    biz_from_reviews = _search_businesses_via_reviews(search_str, top_k=pool_size)
+    biz_from_reviews = _search_businesses_via_reviews(
+        search_str, top_k=pool_size,
+        filter_clauses=filter_clauses,
+    )
 
     # Merge: review-discovered businesses first (more relevant for abstract queries),
     # then direct matches. Deduplicate by business_id.
@@ -235,6 +398,15 @@ async def _search_with_rewrite_and_rerank(
         if filtered:
             candidates = filtered
         # If all candidates are filtered out, keep the original pool
+
+    # --- Step 3.5: Cuisine boost/penalty ---
+    # Detect cuisine intent from the query and boost matching businesses,
+    # penalize non-matching ones. This handles abbreviated cuisine names
+    # like "日料" → "日本料理" that the vector search usually catches
+    # but may miss in edge cases.
+    cuisine_keys = _detect_cuisine_intent(query, rewritten.get("categories", []))
+    if cuisine_keys and len(candidates) > 1:
+        candidates = _apply_cuisine_boost(candidates, cuisine_keys)
 
     if len(candidates) <= 1:
         # Too few to meaningfully rerank
@@ -287,13 +459,15 @@ async def rag_stream(
     Pipeline steps:
     1. Resolve / create conversation
     2. Store user message
-    3. Search OpenSearch for matching businesses
-    4. If no results → fallback with clarifying prompt
-    5. Build RAG context + user prompt
-    6. Stream LLM response token-by-token
-    7. Store assistant response
-    8. Yield structured recommendations
-    9. Signal completion
+    3. Load user profile
+    4. Search OpenSearch for matching businesses
+    5. If no results → fallback with clarifying prompt
+    6. Build RAG context + user prompt (with profile)
+    7. Stream LLM response token-by-token
+    8. Store assistant response
+    9. Analyze conversation and update user profile
+    10. Yield structured recommendations
+    11. Signal completion
 
     Yields:
         SSE event strings (``data: {...}\n\n``).
@@ -306,13 +480,22 @@ async def rag_stream(
     # 2. store user message
     await add_message(conv_id, "user", query)
 
-    # 3. search (with query rewriting + reranking)
+    # 3. Load user profile
+    user_profile = await get_user_profile(conv_id)
+    profile_text = format_profile_for_prompt(user_profile)
+
+    # 4. search (with query rewriting + reranking)
     businesses = await _search_with_rewrite_and_rerank(query)
 
-    # 4. no search results → let LLM chat naturally (handles greetings, small talk)
+    # 5. no search results → let LLM chat naturally (handles greetings, small talk)
     if not businesses:
         history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Add profile to system context if available
+        if profile_text:
+            chat_messages.append({"role": "system", "content": profile_text})
+
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
         # Ensure the current user query is in the prompt (history[-6:] may truncate it)
@@ -330,19 +513,37 @@ async def rag_stream(
             yield _sse("delta", {"content": full_response})
 
         await add_message(conv_id, "assistant", full_response)
+
+        # Analyze and update user profile
+        try:
+            profile_data = await analyze_conversation_for_profile(query, full_response)
+            if any([
+                profile_data.get("locations"),
+                profile_data.get("cuisine_preferences"),
+                profile_data.get("taste_preferences"),
+                profile_data.get("dining_scenarios"),
+                profile_data.get("budget_level"),
+                profile_data.get("other_keywords"),
+            ]):
+                from .user_profile import update_user_profile
+                await update_user_profile(conv_id, profile_data)
+                logger.info(f"Updated user profile for conversation {conv_id}")
+        except Exception as e:
+            logger.warning(f"Failed to update user profile: {e}")
+
         yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
         yield _sse("done", {"total_tokens": len(full_response)})
         return
 
-    # 5. build context & prompt
+    # 6. build context & prompt (with profile)
     context = build_context(businesses)
     history = await get_history(conv_id)
-    user_prompt = build_user_prompt(query, context, history)
+    user_prompt = build_user_prompt(query, context, history, profile_text)
 
-    # 6. prepare structured recommendations
+    # 7. prepare structured recommendations
     recs = _build_recommendations(businesses)
 
-    # 7. stream LLM response
+    # 8. stream LLM response
     llm = get_llm()
     full_response = ""
 
@@ -361,16 +562,33 @@ async def rag_stream(
         full_response = error_msg
         yield _sse("delta", {"content": error_msg})
 
-    # 8. store assistant response
+    # 9. store assistant response
     await add_message(conv_id, "assistant", full_response)
 
-    # 9. yield recommendations
+    # 10. Analyze conversation and update user profile
+    try:
+        profile_data = await analyze_conversation_for_profile(query, full_response)
+        if any([
+            profile_data.get("locations"),
+            profile_data.get("cuisine_preferences"),
+            profile_data.get("taste_preferences"),
+            profile_data.get("dining_scenarios"),
+            profile_data.get("budget_level"),
+            profile_data.get("other_keywords"),
+        ]):
+            from .user_profile import update_user_profile
+            await update_user_profile(conv_id, profile_data)
+            logger.info(f"Updated user profile for conversation {conv_id}")
+    except Exception as e:
+        logger.warning(f"Failed to update user profile: {e}")
+
+    # 11. yield recommendations
     recs_json = json.dumps(
         [r.model_dump() for r in recs], ensure_ascii=False
     )
     yield f"data: {{\"type\": \"recommendations\", \"items\": {recs_json}}}\n\n"
 
-    # 10. done
+    # 12. done
     yield _sse("done", {"total_tokens": len(full_response)})
 
 
@@ -388,12 +606,21 @@ async def rag_generate(
     """
     conv_id = await get_or_create_conversation(conversation_id)
 
+    # Load user profile
+    user_profile = await get_user_profile(conv_id)
+    profile_text = format_profile_for_prompt(user_profile)
+
     # search (with query rewriting + reranking)
     businesses = await _search_with_rewrite_and_rerank(query)
 
     if not businesses:
         history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Add profile to system context if available
+        if profile_text:
+            chat_messages.append({"role": "system", "content": profile_text})
+
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
         # Ensure the current user query is in the prompt (history[-6:] may truncate it)
@@ -407,12 +634,29 @@ async def rag_generate(
         except Exception:
             text = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
         await add_message(conv_id, "assistant", text)
+
+        # Analyze and update user profile
+        try:
+            profile_data = await analyze_conversation_for_profile(query, text)
+            if any([
+                profile_data.get("locations"),
+                profile_data.get("cuisine_preferences"),
+                profile_data.get("taste_preferences"),
+                profile_data.get("dining_scenarios"),
+                profile_data.get("budget_level"),
+                profile_data.get("other_keywords"),
+            ]):
+                from .user_profile import update_user_profile
+                await update_user_profile(conv_id, profile_data)
+        except Exception as e:
+            logger.warning(f"Failed to update user profile: {e}")
+
         return conv_id, text, []
 
     # build
     context = build_context(businesses)
     history = await get_history(conv_id)
-    user_prompt = build_user_prompt(query, context, history)
+    user_prompt = build_user_prompt(query, context, history, profile_text)
 
     await add_message(conv_id, "user", query)
 
@@ -428,6 +672,23 @@ async def rag_generate(
         text = f"抱歉，AI 服务暂时不可用: {e}"
 
     await add_message(conv_id, "assistant", text)
+
+    # Analyze and update user profile
+    try:
+        profile_data = await analyze_conversation_for_profile(query, text)
+        if any([
+            profile_data.get("locations"),
+            profile_data.get("cuisine_preferences"),
+            profile_data.get("taste_preferences"),
+            profile_data.get("dining_scenarios"),
+            profile_data.get("budget_level"),
+            profile_data.get("other_keywords"),
+        ]):
+            from .user_profile import update_user_profile
+            await update_user_profile(conv_id, profile_data)
+    except Exception as e:
+        logger.warning(f"Failed to update user profile: {e}")
+
     recs = _build_recommendations(businesses)
 
     return conv_id, text, recs

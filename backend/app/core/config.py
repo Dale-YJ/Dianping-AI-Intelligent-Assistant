@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # ── Backend-specific OpenSearch indexes ───────────────
     business_index: str = "yelp_business"
     review_index: str = "yelp_review"
+    user_review_index: str = "user_review"
 
     # ── RAG parameters ─────────────────────────────────────
     top_k: int = 5                    # number of businesses to retrieve

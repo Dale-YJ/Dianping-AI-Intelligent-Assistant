@@ -129,17 +129,66 @@ class ModuleManager:
 
     def create_unified_app(self):
         """Create a unified FastAPI app combining all modules."""
+        from contextlib import asynccontextmanager
+        from pathlib import Path
         from fastapi import FastAPI
         from fastapi.middleware.cors import CORSMiddleware
 
         # Import settings from base_config
-        from app.core.config import settings
+        from app.core.config import settings, PROJECT_ROOT
+
+        @asynccontextmanager
+        async def unified_lifespan(app: FastAPI):
+            """Compose startup checks from all three modules."""
+            # ── Analysis module startup ──
+            try:
+                from app.services.analysis_services.review_service import ensure_user_review_index
+                ensure_user_review_index()
+                print("  [analysis] User review index ready")
+            except Exception as e:
+                print(f"  [analysis] User review index check failed: {e}")
+
+            try:
+                from app.services.analysis_services.retrieval import get_all_businesses
+                businesses = get_all_businesses()
+                print(f"  [analysis] Data loaded: {len(businesses)} businesses")
+            except Exception as e:
+                print(f"  [analysis] Data loading failed: {e}")
+
+            # ── Chat module startup ──
+            try:
+                sys.path.insert(0, str(PROJECT_ROOT / "base_config"))
+                from retrieve import embed_query
+                embed_query("")
+                print("  [chat] Embedding model preloaded")
+            except Exception as e:
+                print(f"  [chat] Embedding model preload failed: {e}")
+
+            # ── Reputation / shared: LLM connectivity ──
+            try:
+                from app.services.llm_client import get_llm
+                llm = get_llm()
+                model_name = getattr(llm, "model_name", "unknown")
+                print(f"  [llm] LLM ready: {model_name}")
+            except Exception as e:
+                print(f"  [llm] LLM not ready: {e}")
+
+            try:
+                from base_config.opensearch_client import get_opensearch_client
+                client = get_opensearch_client()
+                count = client.count(index=settings.business_index)["count"]
+                print(f"  [data] OpenSearch ready: {count} businesses")
+            except Exception as e:
+                print(f"  [data] OpenSearch check failed: {e}")
+
+            yield
 
         # Create unified app
         app = FastAPI(
             title="大众点评 AI 智能助手 - 统一入口",
             description="集成所有模块的统一API网关",
             version="1.0.0",
+            lifespan=unified_lifespan,
         )
 
         # Add CORS
