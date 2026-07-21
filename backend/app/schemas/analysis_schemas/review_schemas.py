@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class ReviewCreate(BaseModel):
     """创建评价请求"""
     user_name: str = Field(
-        ...,
+        default="匿名用户",
         min_length=1,
         max_length=50,
         description="用户昵称",

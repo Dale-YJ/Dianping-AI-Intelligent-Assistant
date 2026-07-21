@@ -49,27 +49,25 @@ USER_REVIEW_MAPPING = {
 }
 
 
-def ensure_user_review_index() -> bool:
+def ensure_user_review_index():
     """确保 user_review 索引存在，不存在则创建。
 
-    Returns:
-        True 表示索引已就绪，False 表示创建失败。
+    Raises:
+        RuntimeError: 索引创建失败时抛出，阻止后续读写操作。
     """
     try:
         client = get_client()
         if client.indices.exists(index=settings.user_review_index):
-            logger.info(f"索引 {settings.user_review_index} 已存在")
-            return True
+            return
 
         client.indices.create(
             index=settings.user_review_index,
             body=USER_REVIEW_MAPPING,
         )
         logger.info(f"索引 {settings.user_review_index} 创建成功")
-        return True
     except Exception as e:
         logger.error(f"索引 {settings.user_review_index} 创建失败: {e}")
-        return False
+        raise RuntimeError(f"无法创建 user_review 索引: {e}") from e
 
 
 # ── 评价 CRUD ─────────────────────────────────────────────
@@ -91,6 +89,7 @@ def create_review(
     Returns:
         创建的评价数据（包含生成的 review_id 和时间戳）
     """
+    ensure_user_review_index()  # 懒初始化：确保索引存在
     client = get_client()
     review_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -134,6 +133,7 @@ def update_review(
     Returns:
         更新后的完整评价数据，不存在返回 None
     """
+    ensure_user_review_index()
     client = get_client()
 
     # 先检查评价是否存在
@@ -178,6 +178,7 @@ def delete_review(review_id: str) -> bool:
     Returns:
         True 表示删除成功，False 表示评价不存在
     """
+    ensure_user_review_index()
     client = get_client()
 
     try:
@@ -210,6 +211,7 @@ def get_user_review(review_id: str) -> Optional[dict]:
     Returns:
         评价数据字典，不存在返回 None
     """
+    ensure_user_review_index()
     client = get_client()
     try:
         res = client.get(
@@ -242,6 +244,7 @@ def get_user_reviews_by_business(
     Returns:
         (评价列表, 总数)
     """
+    ensure_user_review_index()
     client = get_client()
 
     sort_field = "created_at" if sort_by == "date" else "rating"
@@ -349,6 +352,7 @@ def get_all_reviews_merged(
     # ── 查询 user_review（用户提交数据） ──
     if source in ("all", "user"):
         try:
+            ensure_user_review_index()
             user_sort_field = {
                 "date": "created_at",
                 "rating": "rating",
