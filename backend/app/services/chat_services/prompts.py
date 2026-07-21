@@ -158,19 +158,26 @@ def build_user_prompt(
     query: str,
     context: str,
     history: list[dict[str, str]] | None = None,
+    profile_text: str | None = None,
 ) -> str:
-    """Assemble the final user prompt with history, context, and query.
+    """Assemble the final user prompt with history, profile, context, and query.
 
     Args:
         query: The user's current natural-language message.
         context: Pre-built RAG context from ``build_context()``.
         history: Optional conversation history (oldest first).  Only the last
             6 messages (3 exchanges) are included to keep the prompt short.
+        profile_text: Optional user profile text (from user_profile module).
 
     Returns:
         The complete user prompt string.
     """
     parts: list[str] = []
+
+    # ── User Profile (if available) ──
+    if profile_text:
+        parts.append(profile_text)
+        parts.append("")
 
     # ── Conversation history (recent only) ──
     if history:

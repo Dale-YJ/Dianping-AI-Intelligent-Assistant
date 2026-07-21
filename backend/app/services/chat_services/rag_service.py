@@ -7,12 +7,15 @@ This module ties together the separated concerns:
 - ``search_service`` — OpenSearch retrieval
 - ``query_rewriter`` — LLM-based query → concrete search conditions
 - ``reranker`` — embedding-similarity re-ranking (bge-base-zh-v1.5)
+- ``user_profile`` — user preference learning from conversation history
 
 Pipeline (updated):
-    1. User query → rewrite_query() → concrete keywords + categories
-    2. hybrid_search() with expanded candidate pool
-    3. rerank() with bge-reranker-v2-m3 cross-encoder
-    4. build_context() → LLM streaming → recommendations
+    1. Load user profile from conversation history
+    2. User query → rewrite_query() → concrete keywords + categories
+    3. hybrid_search() with expanded candidate pool
+    4. rerank() with bge-reranker-v2-m3 cross-encoder
+    5. build_context() → LLM streaming → recommendations
+    6. Analyze conversation → update user profile
 """
 
 from __future__ import annotations
@@ -34,6 +37,11 @@ from .prompts import (
     build_user_prompt,
 )
 from .query_rewriter import rewrite_query, build_search_query
+from .user_profile import (
+    get_user_profile,
+    format_profile_for_prompt,
+)
+from .profile_analyzer import analyze_conversation_for_profile
 
 # 统一使用 base_config 的 OpenSearch 客户端和检索接口
 from opensearch_client import get_opensearch_client
@@ -451,13 +459,15 @@ async def rag_stream(
     Pipeline steps:
     1. Resolve / create conversation
     2. Store user message
-    3. Search OpenSearch for matching businesses
-    4. If no results → fallback with clarifying prompt
-    5. Build RAG context + user prompt
-    6. Stream LLM response token-by-token
-    7. Store assistant response
-    8. Yield structured recommendations
-    9. Signal completion
+    3. Load user profile
+    4. Search OpenSearch for matching businesses
+    5. If no results → fallback with clarifying prompt
+    6. Build RAG context + user prompt (with profile)
+    7. Stream LLM response token-by-token
+    8. Store assistant response
+    9. Analyze conversation and update user profile
+    10. Yield structured recommendations
+    11. Signal completion
 
     Yields:
         SSE event strings (``data: {...}\n\n``).
@@ -470,13 +480,22 @@ async def rag_stream(
     # 2. store user message
     await add_message(conv_id, "user", query)
 
-    # 3. search (with query rewriting + reranking)
+    # 3. Load user profile
+    user_profile = await get_user_profile(conv_id)
+    profile_text = format_profile_for_prompt(user_profile)
+
+    # 4. search (with query rewriting + reranking)
     businesses = await _search_with_rewrite_and_rerank(query)
 
-    # 4. no search results → let LLM chat naturally (handles greetings, small talk)
+    # 5. no search results → let LLM chat naturally (handles greetings, small talk)
     if not businesses:
         history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Add profile to system context if available
+        if profile_text:
+            chat_messages.append({"role": "system", "content": profile_text})
+
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
         # Ensure the current user query is in the prompt (history[-6:] may truncate it)
@@ -494,19 +513,37 @@ async def rag_stream(
             yield _sse("delta", {"content": full_response})
 
         await add_message(conv_id, "assistant", full_response)
+
+        # Analyze and update user profile
+        try:
+            profile_data = await analyze_conversation_for_profile(query, full_response)
+            if any([
+                profile_data.get("locations"),
+                profile_data.get("cuisine_preferences"),
+                profile_data.get("taste_preferences"),
+                profile_data.get("dining_scenarios"),
+                profile_data.get("budget_level"),
+                profile_data.get("other_keywords"),
+            ]):
+                from .user_profile import update_user_profile
+                await update_user_profile(conv_id, profile_data)
+                logger.info(f"Updated user profile for conversation {conv_id}")
+        except Exception as e:
+            logger.warning(f"Failed to update user profile: {e}")
+
         yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
         yield _sse("done", {"total_tokens": len(full_response)})
         return
 
-    # 5. build context & prompt
+    # 6. build context & prompt (with profile)
     context = build_context(businesses)
     history = await get_history(conv_id)
-    user_prompt = build_user_prompt(query, context, history)
+    user_prompt = build_user_prompt(query, context, history, profile_text)
 
-    # 6. prepare structured recommendations
+    # 7. prepare structured recommendations
     recs = _build_recommendations(businesses)
 
-    # 7. stream LLM response
+    # 8. stream LLM response
     llm = get_llm()
     full_response = ""
 
@@ -525,16 +562,33 @@ async def rag_stream(
         full_response = error_msg
         yield _sse("delta", {"content": error_msg})
 
-    # 8. store assistant response
+    # 9. store assistant response
     await add_message(conv_id, "assistant", full_response)
 
-    # 9. yield recommendations
+    # 10. Analyze conversation and update user profile
+    try:
+        profile_data = await analyze_conversation_for_profile(query, full_response)
+        if any([
+            profile_data.get("locations"),
+            profile_data.get("cuisine_preferences"),
+            profile_data.get("taste_preferences"),
+            profile_data.get("dining_scenarios"),
+            profile_data.get("budget_level"),
+            profile_data.get("other_keywords"),
+        ]):
+            from .user_profile import update_user_profile
+            await update_user_profile(conv_id, profile_data)
+            logger.info(f"Updated user profile for conversation {conv_id}")
+    except Exception as e:
+        logger.warning(f"Failed to update user profile: {e}")
+
+    # 11. yield recommendations
     recs_json = json.dumps(
         [r.model_dump() for r in recs], ensure_ascii=False
     )
     yield f"data: {{\"type\": \"recommendations\", \"items\": {recs_json}}}\n\n"
 
-    # 10. done
+    # 12. done
     yield _sse("done", {"total_tokens": len(full_response)})
 
 
@@ -552,12 +606,21 @@ async def rag_generate(
     """
     conv_id = await get_or_create_conversation(conversation_id)
 
+    # Load user profile
+    user_profile = await get_user_profile(conv_id)
+    profile_text = format_profile_for_prompt(user_profile)
+
     # search (with query rewriting + reranking)
     businesses = await _search_with_rewrite_and_rerank(query)
 
     if not businesses:
         history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Add profile to system context if available
+        if profile_text:
+            chat_messages.append({"role": "system", "content": profile_text})
+
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
         # Ensure the current user query is in the prompt (history[-6:] may truncate it)
@@ -571,12 +634,29 @@ async def rag_generate(
         except Exception:
             text = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
         await add_message(conv_id, "assistant", text)
+
+        # Analyze and update user profile
+        try:
+            profile_data = await analyze_conversation_for_profile(query, text)
+            if any([
+                profile_data.get("locations"),
+                profile_data.get("cuisine_preferences"),
+                profile_data.get("taste_preferences"),
+                profile_data.get("dining_scenarios"),
+                profile_data.get("budget_level"),
+                profile_data.get("other_keywords"),
+            ]):
+                from .user_profile import update_user_profile
+                await update_user_profile(conv_id, profile_data)
+        except Exception as e:
+            logger.warning(f"Failed to update user profile: {e}")
+
         return conv_id, text, []
 
     # build
     context = build_context(businesses)
     history = await get_history(conv_id)
-    user_prompt = build_user_prompt(query, context, history)
+    user_prompt = build_user_prompt(query, context, history, profile_text)
 
     await add_message(conv_id, "user", query)
 
@@ -592,6 +672,23 @@ async def rag_generate(
         text = f"抱歉，AI 服务暂时不可用: {e}"
 
     await add_message(conv_id, "assistant", text)
+
+    # Analyze and update user profile
+    try:
+        profile_data = await analyze_conversation_for_profile(query, text)
+        if any([
+            profile_data.get("locations"),
+            profile_data.get("cuisine_preferences"),
+            profile_data.get("taste_preferences"),
+            profile_data.get("dining_scenarios"),
+            profile_data.get("budget_level"),
+            profile_data.get("other_keywords"),
+        ]):
+            from .user_profile import update_user_profile
+            await update_user_profile(conv_id, profile_data)
+    except Exception as e:
+        logger.warning(f"Failed to update user profile: {e}")
+
     recs = _build_recommendations(businesses)
 
     return conv_id, text, recs

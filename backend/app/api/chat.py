@@ -27,6 +27,10 @@ try:
         rag_generate,
         rag_stream,
     )
+    from backend.app.services.chat_services.user_profile import (
+        get_user_profile,
+        clear_user_profile,
+    )
 except ImportError:
     logger.warning(
         "Failed to import via 'backend.app.*' prefix, falling back to 'app.*'. "
@@ -49,6 +53,10 @@ except ImportError:
         _build_recommendations,
         rag_generate,
         rag_stream,
+    )
+    from app.services.chat_services.user_profile import (  # type: ignore[no-redef]
+        get_user_profile,
+        clear_user_profile,
     )
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -109,3 +117,29 @@ async def clear_chat_history(conversation_id: str):
     """Clear a conversation's history."""
     await clear_conversation(conversation_id)
     return {"status": "ok", "message": "Conversation cleared"}
+
+
+@router.get("/profile/{conversation_id}")
+async def get_profile(conversation_id: str):
+    """Get user profile for a conversation.
+
+    Returns the user profile including:
+    - locations: Mentioned locations/cities
+    - cuisine_preferences: Preferred cuisine types
+    - taste_preferences: Taste preferences
+    - dining_scenarios: Dining scenarios
+    - budget_level: Budget preference
+    - other_keywords: Other keywords
+    """
+    profile = await get_user_profile(conversation_id)
+    return {
+        "conversation_id": conversation_id,
+        "profile": profile.to_dict(),
+    }
+
+
+@router.delete("/profile/{conversation_id}")
+async def clear_profile(conversation_id: str):
+    """Clear user profile for a conversation."""
+    await clear_user_profile(conversation_id)
+    return {"status": "ok", "message": "Profile cleared"}
