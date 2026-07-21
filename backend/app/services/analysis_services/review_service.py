@@ -91,6 +91,7 @@ def create_review(
     Returns:
         创建的评价数据（包含生成的 review_id 和时间戳）
     """
+    ensure_user_review_index()  # 懒初始化：确保索引存在
     client = get_client()
     review_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -134,6 +135,7 @@ def update_review(
     Returns:
         更新后的完整评价数据，不存在返回 None
     """
+    ensure_user_review_index()
     client = get_client()
 
     # 先检查评价是否存在
@@ -178,6 +180,7 @@ def delete_review(review_id: str) -> bool:
     Returns:
         True 表示删除成功，False 表示评价不存在
     """
+    ensure_user_review_index()
     client = get_client()
 
     try:
@@ -210,6 +213,7 @@ def get_user_review(review_id: str) -> Optional[dict]:
     Returns:
         评价数据字典，不存在返回 None
     """
+    ensure_user_review_index()
     client = get_client()
     try:
         res = client.get(
@@ -242,6 +246,7 @@ def get_user_reviews_by_business(
     Returns:
         (评价列表, 总数)
     """
+    ensure_user_review_index()
     client = get_client()
 
     sort_field = "created_at" if sort_by == "date" else "rating"
@@ -349,6 +354,7 @@ def get_all_reviews_merged(
     # ── 查询 user_review（用户提交数据） ──
     if source in ("all", "user"):
         try:
+            ensure_user_review_index()
             user_sort_field = {
                 "date": "created_at",
                 "rating": "rating",
