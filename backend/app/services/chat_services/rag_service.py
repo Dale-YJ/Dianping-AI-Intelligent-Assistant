@@ -83,6 +83,7 @@ CUISINE_MATCH_BOOST = 2.0     # score multiplier when cuisine matches
 CUISINE_MISMATCH_PENALTY = 0.5  # score multiplier when cuisine requested but no match
 
 # Reranker settings
+RERANK_CANDIDATE_MULTIPLIER = 4  # fetch top_k * N candidates, rerank, then trim
 RERANK_MIN_POOL_SIZE = 15        # minimum candidates before reranking
 
 
