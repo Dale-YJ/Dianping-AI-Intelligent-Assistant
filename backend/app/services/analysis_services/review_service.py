@@ -49,27 +49,25 @@ USER_REVIEW_MAPPING = {
 }
 
 
-def ensure_user_review_index() -> bool:
+def ensure_user_review_index():
     """确保 user_review 索引存在，不存在则创建。
 
-    Returns:
-        True 表示索引已就绪，False 表示创建失败。
+    Raises:
+        RuntimeError: 索引创建失败时抛出，阻止后续读写操作。
     """
     try:
         client = get_client()
         if client.indices.exists(index=settings.user_review_index):
-            logger.info(f"索引 {settings.user_review_index} 已存在")
-            return True
+            return
 
         client.indices.create(
             index=settings.user_review_index,
             body=USER_REVIEW_MAPPING,
         )
         logger.info(f"索引 {settings.user_review_index} 创建成功")
-        return True
     except Exception as e:
         logger.error(f"索引 {settings.user_review_index} 创建失败: {e}")
-        return False
+        raise RuntimeError(f"无法创建 user_review 索引: {e}") from e
 
 
 # ── 评价 CRUD ─────────────────────────────────────────────

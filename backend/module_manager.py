@@ -143,10 +143,8 @@ class ModuleManager:
             # ── Analysis module startup ──
             try:
                 from app.services.analysis_services.review_service import ensure_user_review_index
-                if ensure_user_review_index():
-                    print("  [analysis] User review index ready")
-                else:
-                    print("  [analysis] WARNING: User review index not ready")
+                ensure_user_review_index()
+                print("  [analysis] User review index ready")
             except Exception as e:
                 print(f"  [analysis] User review index check failed: {e}")
 
