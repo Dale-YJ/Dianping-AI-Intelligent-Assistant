@@ -94,6 +94,7 @@ class Review(BaseModel):
     funny: int = 0
     cool: int = 0
     sentiment: Optional[Sentiment] = None
+    source: str = Field("ingested", description="评价来源: ingested(预导入) / user(用户提交)")
 
 
 # ── 关键词标签 ────────────────────────────────────────────
