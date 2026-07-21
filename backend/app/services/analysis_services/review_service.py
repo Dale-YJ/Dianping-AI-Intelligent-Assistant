@@ -307,12 +307,8 @@ def get_all_reviews_merged(
     # ── 查询 yelp_review（预导入数据） ──
     if source in ("all", "ingested"):
         try:
-            yelp_sort_field = {
-                "date": "date",
-                "rating": "stars",
-                "useful": "useful",
-            }.get(sort_by, "date")
-
+            # 注意：yelp_review 的 date 字段是动态映射的 text 类型，
+            # 不支持 OpenSearch 侧排序，统一在 Python 侧排序。
             yelp_query = {
                 "query": {
                     "bool": {
@@ -321,8 +317,7 @@ def get_all_reviews_merged(
                         ]
                     }
                 },
-                "sort": [{yelp_sort_field: {"order": "desc"}}],
-                "size": 1000,  # 获取全部再分页
+                "size": 1000,
             }
 
             if min_rating > 0:
