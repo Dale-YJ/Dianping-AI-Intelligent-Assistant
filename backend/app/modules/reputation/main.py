@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="商家口碑分析模块",
-    description="关键特征词提取 + 评价情感分析",
+    description="关键特征词提取 + 评价情感分析 + 差评归因 + 经营建议",
     version="1.0.0",
     lifespan=lifespan,
 )

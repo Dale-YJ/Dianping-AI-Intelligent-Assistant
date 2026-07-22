@@ -200,7 +200,7 @@ def build_context(businesses: list[dict]) -> str:
                     if len(text) > 200:
                         text = text[:200] + "..."
                     parts.append(
-                        f"      - {r.get('stars', '?')}★ | {text}"
+                        f"      - {r.get('stars') or r.get('rating', '?')}★ | {text}"
                     )
 
     return "\n".join(parts)
@@ -322,11 +322,11 @@ def build_business_analysis_prompt(
     # ── Reviews ──
     parts.append(f"## 顾客评价（共 {len(reviews)} 条）")
     for i, r in enumerate(reviews, 1):
-        rating = r.get("stars", "?")
+        rating = r.get("stars") or r.get("rating", "?")
         text = r.get("text", "")
         if len(text) > 300:
             text = text[:300] + "..."
-        date = str(r.get("date", ""))[:10]
+        date = str(r.get("date") or r.get("created_at", ""))[:10]
         useful = r.get("useful", 0)
         parts.append(
             f"[{i}] ⭐{rating} | {date} | 有用数:{useful}\n"

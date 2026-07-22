@@ -13,6 +13,8 @@ from fastapi import APIRouter, Query
 from app.services.reputation_services.keyword_extraction import extract_keywords
 from app.services.reputation_services.sentiment_analysis import analyze_sentiment
 from app.services.reputation_services.optimized_queries import get_businesses_with_reviews
+from app.services.reputation_services.negative_attribution import analyze_negative_attribution
+from app.services.reputation_services.suggestions import generate_suggestions
 
 logger = logging.getLogger(__name__)
 
@@ -202,4 +204,79 @@ async def api_businesses_with_reviews(
         })
     except Exception as e:
         logger.error(f"高效商家列表查询失败: {e}")
+        return make_response(500, message=str(e))
+
+
+# ── C.6 差评归因分析 ─────────────────────────────────────────
+
+@router.get("/businesses/{business_id}/negative-attribution")
+async def api_negative_attribution(
+    business_id: str,
+    min_count: int = Query(3, ge=1, description="最少评价数阈值"),
+):
+    """差评归因分析
+
+    查询商家低分评价（≤2 星），按维度归因问题：
+    food(口味) / service(服务) / environment(环境) / price(价格) / other(其他)
+
+    Returns:
+        {
+            "business_id": "商家ID",
+            "business_name": "商家名称",
+            "total_negative": 差评总数,
+            "dimensions": [
+                {"dimension": "service", "label": "服务", "count": 8, "ratio": 0.53,
+                 "examples": ["原文片段1", ...]},
+                ...
+            ]
+        }
+    """
+    try:
+        result = await analyze_negative_attribution(business_id, min_count=min_count)
+
+        if "error" in result:
+            code = result.get("code", 500)
+            return make_response(code, message=result["error"])
+
+        return make_response(0, result)
+
+    except Exception as e:
+        logger.error(f"差评归因分析失败: {e}")
+        return make_response(500, message=str(e))
+
+
+# ── C.7 经营建议生成 ─────────────────────────────────────────
+
+@router.get("/businesses/{business_id}/suggestions")
+async def api_suggestions(
+    business_id: str,
+):
+    """经营改进建议
+
+    基于正面（≥4 星）和负面（≤2 星）评价，调用 LLM 生成 4 条具体改进建议。
+
+    Returns:
+        {
+            "business_id": "商家ID",
+            "business_name": "商家名称",
+            "positive_review_count": 好评数,
+            "negative_review_count": 差评数,
+            "suggestions": [
+                {"priority": "high", "category": "service", "problem": "...",
+                 "action": "...", "expected_effect": "..."},
+                ...
+            ]
+        }
+    """
+    try:
+        result = await generate_suggestions(business_id)
+
+        if "error" in result:
+            code = result.get("code", 500)
+            return make_response(code, message=result["error"])
+
+        return make_response(0, result)
+
+    except Exception as e:
+        logger.error(f"经营建议生成失败: {e}")
         return make_response(500, message=str(e))
