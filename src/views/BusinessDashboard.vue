@@ -91,19 +91,19 @@
 
       <!-- Review List -->
       <div class="review-list" v-else>
-        <div class="review-empty" v-if="filteredReviews.length === 0">
+        <div class="review-empty" v-if="pagedReviews.length === 0">
           <p>暂无{{ activeFilter === 'all' ? '' : filterLabel }}评价</p>
         </div>
         <div
-          v-for="(r, i) in filteredReviews" :key="i"
+          v-for="(r, i) in pagedReviews" :key="i"
           class="review-item stagger-3"
-          :class="{ 'is-user-review': r.source === 'user_review' }"
+          :class="{ 'is-user-review': r.source === 'user_review' || r.source === 'user' }"
           :style="{ animationDelay: (0.3 + i * 0.05) + 's' }"
         >
           <div class="review-top">
             <div class="review-user-row">
               <span class="review-user">{{ r.user }}</span>
-              <span class="review-source-badge" v-if="r.source === 'user_review'">我的评价</span>
+              <span class="review-source-badge" v-if="r.source === 'user_review' || r.source === 'user'">我的评价</span>
             </div>
             <SentimentBadge :sentiment="r.sentiment" :confidence="r.confidence" />
           </div>
@@ -112,7 +112,7 @@
           <div class="review-bottom">
             <span class="review-date">{{ r.date }}</span>
             <span class="review-votes" v-if="r.useful">👍 {{ r.useful }}</span>
-            <template v-if="r.source === 'user_review' && r.review_id">
+            <template v-if="(r.source === 'user_review' || r.source === 'user') && r.review_id">
               <button class="review-action-btn" title="编辑" @click="handleEditReview(r)">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </button>
@@ -125,7 +125,7 @@
       </div>
 
       <!-- Pagination -->
-      <div class="pagination" v-if="reviewTotalPages > 1">
+      <div class="pagination" v-if="showPagination">
         <button class="page-btn" :disabled="reviewPage <= 1" @click="goToReviewPage(reviewPage - 1)">上一页</button>
         <span class="page-info">{{ reviewPage }} / {{ reviewTotalPages }}</span>
         <button class="page-btn" :disabled="reviewPage >= reviewTotalPages" @click="goToReviewPage(reviewPage + 1)">下一页</button>
@@ -262,6 +262,7 @@ import {
   getKeywords, getNegativeAttribution, getSuggestions, deleteReview,
 } from '../api/modules/reviews.js'
 import { sharedStore } from '../stores/sharedData.js'
+import { analyzeSentiment } from '../utils/analyzeSentiment.js'
 
 const ATTRIBUTION_COLORS = ['#EF4444', '#F97316', '#F59E0B', '#EAB308', '#F97316']
 
@@ -301,9 +302,6 @@ export default {
     const showReviewForm = ref(false)
     const editingReview = ref(null)
 
-    /* ─── Sentiment ─── */
-    const sentimentStats = ref(null)
-
     /* ─── Analysis ─── */
     const featureGroups = ref([])
     const complaintGroups = ref([])
@@ -317,20 +315,14 @@ export default {
     const filterLabel = computed(() => filters.find(f => f.key === activeFilter.value)?.label || '')
 
     const sentimentCounts = computed(() => {
-      if (sentimentStats.value) {
-        return {
-          positive: sentimentStats.value.positive?.count || 0,
-          neutral: sentimentStats.value.neutral?.count || 0,
-          negative: sentimentStats.value.negative?.count || 0,
-        }
-      }
+      // 始终从前端 analyzeSentiment 统计（与 SentimentBadge 保持一致）
       const c = { positive: 0, neutral: 0, negative: 0 }
       reviews.value.forEach(r => { if (c[r.sentiment] !== undefined) c[r.sentiment]++ })
       return c
     })
 
     const sentimentPercent = computed(() => {
-      const total = sentimentStats.value?.total_reviews || reviews.value.length || 1
+      const total = reviews.value.length || 1
       return {
         positive: Math.round(sentimentCounts.value.positive / total * 100),
         neutral: Math.round(sentimentCounts.value.neutral / total * 100),
@@ -344,7 +336,15 @@ export default {
         : reviews.value.filter(r => r.sentiment === activeFilter.value)
     )
 
-    const reviewTotalPages = computed(() => Math.max(1, Math.ceil(reviewTotal.value / reviewPageSize)))
+    // 客户端分页 & 筛选
+    const pagedReviews = computed(() => {
+      const start = (reviewPage.value - 1) * reviewPageSize
+      return filteredReviews.value.slice(start, start + reviewPageSize)
+    })
+    const reviewTotalPages = computed(() =>
+      Math.max(1, Math.ceil(filteredReviews.value.length / reviewPageSize))
+    )
+    const showPagination = computed(() => reviewTotalPages.value > 1)
     const maxComplaint = computed(() => Math.max(...complaintGroups.value.map(c => c.count), 1))
 
     // 解析 AI 总结 JSON（可能是字符串）
@@ -425,10 +425,10 @@ export default {
           stars: Math.round(r.rating || 0),
           text: r.text || r.snippet || '',
           date: r.date || '',
-          sentiment: r.rating >= 4 ? 'positive' : r.rating <= 2 ? 'negative' : 'neutral',
-          confidence: 85,
+          sentiment: analyzeSentiment(r).label,
+          confidence: analyzeSentiment(r).confidence,
           useful: r.useful || 0,
-          source: r.source || 'yelp',
+          source: r.source || 'ingested',
           review_id: r.review_id || null,
         }))
         reviewTotal.value = biz.sources.length
@@ -458,9 +458,10 @@ export default {
     async function fetchReviews(bizId) {
       reviewsLoading.value = true
       try {
+        // 一次拉全量（后端 page_size 最大 50），客户端分页
         const result = await getBusinessReviews(bizId, {
-          page: reviewPage.value,
-          pageSize: reviewPageSize,
+          page: 1,
+          pageSize: 50,
           sortBy: 'date',
         })
         reviews.value = (result.items || []).map(r => ({
@@ -468,10 +469,10 @@ export default {
           stars: Math.round(r.rating || 0),
           text: r.text || '',
           date: r.date || '',
-          sentiment: r.sentiment?.label || (r.rating >= 4 ? 'positive' : r.rating <= 2 ? 'negative' : 'neutral'),
-          confidence: r.sentiment ? Math.round((r.sentiment.confidence || 0) * 100) : 85,
+          sentiment: r.sentiment?.label || analyzeSentiment(r).label,
+          confidence: r.sentiment ? Math.round((r.sentiment.confidence || 0) * 100) : analyzeSentiment(r).confidence,
           useful: r.useful || 0,
-          source: r.source || 'yelp',
+          source: r.source || 'ingested',
           review_id: r.review_id || null,
         }))
         reviewTotal.value = result.total || 0
@@ -482,27 +483,22 @@ export default {
     async function fetchStats(bizId) {
       try {
         const data = await getSentimentStats(bizId)
-        if (data?.sentiment_stats) {
-          sentimentStats.value = {
-            total_reviews: data.total_reviews,
-            positive: { count: data.sentiment_stats.positive_count, percentage: Math.round(data.sentiment_stats.positive_ratio * 100) },
-            neutral: { count: data.sentiment_stats.neutral_count, percentage: Math.round(data.sentiment_stats.neutral_ratio * 100) },
-            negative: { count: data.sentiment_stats.negative_count, percentage: Math.round(data.sentiment_stats.negative_ratio * 100) },
-          }
-        }
-        // 同时用情感接口带回的评价列表更新 review
-        if (data?.reviews?.length && (!reviews.value.length || activeFilter.value === 'all')) {
-          reviews.value = data.reviews.map(r => ({
-            user: r.user_name || '匿名用户',
-            stars: Math.round(r.rating || 0),
-            text: r.text || '',
-            date: r.date || '',
-            sentiment: r.sentiment?.label || 'neutral',
-            confidence: r.sentiment ? Math.round((r.sentiment.confidence || 0) * 100) : 0,
-            useful: r.useful || 0,
-            source: r.source || 'yelp',
-            review_id: r.review_id || null,
-          }))
+        // 用后端 LLM 情感分析结果更新评价列表（比前端关键词更准确）
+        if (data?.reviews?.length) {
+          reviews.value = data.reviews.map(r => {
+            const stars = Math.round(r.rating || 0)
+            const apiSent = r.sentiment
+            const apiLabel = apiSent?.label
+            const apiConf = apiSent ? Math.round((apiSent.confidence || 0) * 100) : 0
+            // 评分硬规则：≥4 强制正面，≤2 强制负面，防止 LLM 误判
+            const sentiment = stars >= 4 ? 'positive'
+              : stars <= 2 && stars >= 1 ? 'negative'
+              : (apiLabel || analyzeSentiment(r).label)
+            const confidence = stars >= 4 ? Math.max(apiConf, 85)
+              : stars <= 2 && stars >= 1 ? Math.max(apiConf, 75)
+              : (apiConf || analyzeSentiment(r).confidence)
+            return { user: r.user_name || '匿名用户', stars, text: r.text || '', date: r.date || '', sentiment, confidence, useful: r.useful || 0, source: r.source || 'ingested', review_id: r.review_id || null }
+          })
           reviewTotal.value = data.total_reviews || reviews.value.length
         }
       } catch {}
@@ -552,7 +548,7 @@ export default {
       } catch {} finally { analysisLoading.value = false }
     }
 
-    function goToReviewPage(p) { reviewPage.value = p; fetchReviews(businessId()) }
+    function goToReviewPage(p) { reviewPage.value = p }
 
     /* ─── Review Form Handlers ─── */
     function openWriteReview() {
@@ -626,15 +622,16 @@ export default {
     }
 
     onMounted(() => initData())
-    watch(activeFilter, () => { reviewPage.value = 1; fetchReviews(businessId()) })
+    // 切换筛选时回到第一页
+    watch(activeFilter, () => { reviewPage.value = 1 })
     watch(activeTab, tab => { if (tab === 'analysis') fetchAnalysis(businessId()) })
     watch(() => route.params.id, () => { analysisLoaded.value = false; initData() })
 
     return {
       activeTab, activeFilter, tabs, filters, filterLabel,
       shop, shopLoading, shopError,
-      reviews, reviewsLoading, reviewPage, reviewTotal, reviewTotalPages,
-      sentimentCounts, sentimentPercent, filteredReviews,
+      reviews, reviewsLoading, reviewPage, reviewTotal, reviewTotalPages, showPagination,
+      sentimentCounts, sentimentPercent, filteredReviews, pagedReviews,
       featureGroups, complaintGroups, aiSummary, aiSummaryParsed, autoSuggestions,
       totalNegativeReviews, analysisLoading, maxComplaint,
       initData, goToReviewPage, businessId,

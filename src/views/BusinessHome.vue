@@ -14,6 +14,11 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
           <span>{{ selectedBiz ? '切换' : '选择餐厅' }}</span>
         </button>
+        <button
+          v-if="selectedBiz"
+          class="dashboard-btn"
+          @click="router.push('/business/' + encodeURIComponent(selectedBiz.id))"
+        >📊 评价汇总</button>
       </div>
 
       <div class="chat-messages">
@@ -217,7 +222,7 @@ export default {
     })
 
     return {
-      messages, isThinking, displayMessages, selectedBiz,
+      router, messages, isThinking, displayMessages, selectedBiz,
       isFirstInGroup, isLastInGroup, sendMessage, goToShop,
     }
   },
@@ -259,6 +264,17 @@ export default {
   font-size: var(--text-sm); font-weight: 600;
   white-space: nowrap;
 }
+.dashboard-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: var(--space-1) var(--space-3);
+  background: var(--warm-bg); color: var(--coral);
+  border: 1px solid var(--coral);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm); font-weight: 600;
+  white-space: nowrap;
+  transition: all var(--duration-fast);
+}
+.dashboard-btn:hover { background: var(--coral-pale); }
 .chat-messages {
   flex: 1; overflow-y: auto; padding: var(--space-4);
   display: flex; flex-direction: column; gap: var(--space-3);

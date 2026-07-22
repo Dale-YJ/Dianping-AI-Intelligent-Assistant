@@ -1,5 +1,5 @@
 <template>
-  <span class="sentiment-badge" :class="sentiment">
+  <span class="sentiment-badge" :class="[sentiment, { 'low-conf': confidence < 50 }]">
     <span class="dot"></span>
     {{ label }}
     <span class="confidence" v-if="confidence">{{ confidence }}%</span>
@@ -53,5 +53,8 @@ export default {
 .confidence {
   opacity: 0.7;
   font-weight: 400;
+}
+.sentiment-badge.low-conf {
+  opacity: 0.55;
 }
 </style>

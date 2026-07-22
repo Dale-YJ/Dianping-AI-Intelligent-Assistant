@@ -180,9 +180,10 @@ import RecommendationCard from '../components/RecommendationCard.vue'
 import TypingIndicator from '../components/TypingIndicator.vue'
 import AIReplyContent from '../components/AIReplyContent.vue'
 import ChatHistoryPanel from '../components/ChatHistoryPanel.vue'
-import { postChatSend } from '../api/modules/chat.js'
+import { postChatSend, getQuickTags } from '../api/modules/chat.js'
 import { getBusinessDetail } from '../api/modules/business.js'
 import { sharedStore } from '../stores/sharedData.js'
+import { clearConversation } from '../composables/useChat.js'
 import { useChatHistory } from '../composables/useChatHistory.js'
 import { useTranslate } from '../composables/useTranslate.js'
 import { hasNonChinaLocation, extractCity } from '../utils/detectRegion.js'
@@ -302,13 +303,29 @@ export default {
     const isDesktop = ref(false)
     const showHistory = ref(false)
     const historyConversations = ref([])
-    const quickQueries = ref([
+    const DEFAULT_TAGS = [
       '附近有什么好吃的川菜？',
       '适合约会的安静餐厅推荐',
       '哪家咖啡馆适合学习？',
       '实惠的夜宵推荐',
       '适合聚餐的地方',
-    ])
+    ]
+
+    const quickQueries = ref([...DEFAULT_TAGS])
+
+    async function fetchQuickTags() {
+      try {
+        const data = await getQuickTags()
+        if (data?.tags?.length) {
+          const texts = data.tags
+            .map(t => typeof t === 'string' ? t : (t.text || t.label || ''))
+            .filter(t => t && t !== '经济实惠')
+          if (texts.length) quickQueries.value = texts
+        }
+      } catch {
+        // 后端未就绪时使用默认标签
+      }
+    }
 
     /* ─── 计算属性 ─── */
     /** 按对话轮次分组推荐结果，每组关联到用户的原始提问 */
@@ -439,12 +456,43 @@ export default {
       setCurrentId(conversationId.value)
     }
 
+    /* ─── 话题组（用于检测话题切换，自动清上下文） ─── */
+    const TOPIC_GROUPS = [
+      ['素食', '素菜', '斋', '吃素', '素', '菜卷', '松茸', '清淡'],
+      ['聚餐', '聚会', '朋友一起', '请客', '多人', '包间', '一桌', '大家'],
+      ['约会', '情侣', '浪漫', '安静', '二人', '烛光'],
+      ['火锅', '涮', '串串', '麻辣'],
+      ['日料', '寿司', '刺身', '居酒屋', '拉面'],
+      ['咖啡', '奶茶', '甜品', '蛋糕', '下午茶'],
+    ]
+
+    function getTopicGroup(text) {
+      for (let i = 0; i < TOPIC_GROUPS.length; i++) {
+        if (TOPIC_GROUPS[i].some(kw => text.includes(kw))) return i
+      }
+      return -1
+    }
+
     /* ─── 发送消息（翻译 → RAG → LLM） ─── */
     async function sendMessage(text) {
       if (!text.trim() || isThinking.value) return
 
       const t = timeStr()
       const rawText = text.trim()
+
+      // 话题切换检测：当前消息与上一条 AI 回复话题不同 → 清空对话重新开始
+      const curGroup = getTopicGroup(rawText)
+      if (curGroup >= 0 && messages.value.length >= 2) {
+        const lastAi = [...messages.value].reverse().find(m => m.role === 'ai')
+        if (lastAi?.intro) {
+          const prevGroup = getTopicGroup(lastAi.intro)
+          if (prevGroup >= 0 && prevGroup !== curGroup) {
+            conversationId.value = null
+            messages.value = []
+            clearConversation()
+          }
+        }
+      }
 
       messages.value.push({ role: 'user', text: rawText, time: t })
       scrollDown()
@@ -566,7 +614,7 @@ export default {
 
     /* ─── 响应式断点 ─── */
     function onResize() { isDesktop.value = window.innerWidth >= 1024 }
-    onMounted(() => { onResize(); restoreLastConversation(); window.addEventListener('resize', onResize) })
+    onMounted(() => { onResize(); restoreLastConversation(); fetchQuickTags(); window.addEventListener('resize', onResize) })
     onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
     return {

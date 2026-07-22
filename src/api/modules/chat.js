@@ -292,3 +292,22 @@ export async function deleteChatHistoryApi(conversationId) {
   }
   return json
 }
+
+/* ─── A.2 快捷提问标签 ─── */
+
+/**
+ * 获取欢迎页快捷提问标签列表
+ *
+ * @returns {Promise<{ tags: Array<{ id: string, text: string, icon: string }> }>}
+ */
+export async function getQuickTags() {
+  const url = '/api/chat/quick-tags'
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`获取快捷标签失败 (HTTP ${resp.status})`)
+  const json = await resp.json()
+  if (json && typeof json.code === 'number') {
+    if (json.code !== 0) throw new Error(json.message || '获取快捷标签失败')
+    return json.data !== undefined ? json.data : json
+  }
+  return json
+}

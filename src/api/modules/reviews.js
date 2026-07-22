@@ -97,12 +97,12 @@ export function getKeywords(businessId, topN = 15) {
   return get(`/businesses/${encodeURIComponent(businessId)}/keywords`, undefined, 120000)
 }
 
-/* ───────── 差评归因 — 暂无独立后端，从情感+关键词衍生 ───────── */
+/* ───────── 差评归因 ───────── */
 export function getNegativeAttribution(businessId) {
-  return Promise.resolve({ total_negative: 0, attributions: [] })
+  return get(`/businesses/${encodeURIComponent(businessId)}/negative-attribution`)
 }
 
-/* ───────── 经营建议 — 暂无后端 ───────── */
+/* ───────── 经营建议 ───────── */
 export function getSuggestions(businessId) {
-  return Promise.resolve({ suggestions: [] })
+  return get(`/businesses/${encodeURIComponent(businessId)}/suggestions`, undefined, 120000)
 }

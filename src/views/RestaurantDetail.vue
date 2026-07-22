@@ -99,6 +99,11 @@
         <DishGrid :dishes="dishes" />
       </div>
 
+      <!-- AI Summary -->
+      <div class="detail-section" v-if="businessId">
+        <AISummary :business-id="businessId" />
+      </div>
+
       <!-- Reviews -->
       <div class="detail-section">
         <div class="detail-section-title">
@@ -123,14 +128,14 @@
               v-for="(r, i) in reviews"
               :key="i"
               class="review-card-detail"
-              :class="{ 'is-user-review': r.source === 'user_review' }"
+              :class="{ 'is-user-review': r.source === 'user_review' || r.source === 'user' }"
             >
               <div class="rv-avatar">{{ r.avatar || (r.user || '?')[0] }}</div>
               <div class="rv-body">
                 <div class="rv-header">
                   <div class="rv-user-row">
                     <span class="rv-user">{{ r.user }}</span>
-                    <span class="rv-source-badge" v-if="r.source === 'user_review'">我的评价</span>
+                    <span class="rv-source-badge" v-if="r.source === 'user_review' || r.source === 'user'">我的评价</span>
                   </div>
                   <div class="rv-stars">
                     <span v-for="s in 5" :key="s" class="rv-star" :class="s <= r.rating ? 'on' : 'off'">★</span>
@@ -140,7 +145,7 @@
                 <div class="rv-footer">
                   <span class="rv-date">{{ r.date }}</span>
                   <span class="rv-likes" v-if="r.likes">👍 {{ r.likes }}</span>
-                  <template v-if="r.source === 'user_review' && r.review_id">
+                  <template v-if="(r.source === 'user_review' || r.source === 'user') && r.review_id">
                     <button class="rv-action-btn" title="编辑" @click="handleEditReview(r)">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
@@ -197,7 +202,10 @@
             <div class="source-stars">
               <span v-for="i in 5" :key="i" class="star" :class="sourceStarClass(i)">{{ sourceStarChar(i) }}</span>
             </div>
-            <p class="source-full-text">{{ selectedSource.text || selectedSource.snippet }}</p>
+            <div class="source-loading" v-if="sourceDetailLoading">
+              <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+            </div>
+            <p class="source-full-text" v-else>{{ selectedSource.text || selectedSource.snippet }}</p>
           </div>
         </div>
       </div>
@@ -221,8 +229,9 @@ import { useRoute, useRouter } from 'vue-router'
 import PhotoStrip from '../components/PhotoStrip.vue'
 import DishGrid from '../components/DishGrid.vue'
 import ReviewForm from '../components/ReviewForm.vue'
+import AISummary from '../components/AISummary.vue'
 import { getBusinessDetail } from '../api/modules/business.js'
-import { getBusinessReviews, deleteReview } from '../api/modules/reviews.js'
+import { getBusinessReviews, getReviewDetail, deleteReview } from '../api/modules/reviews.js'
 import { sharedStore } from '../stores/sharedData.js'
 
 const IMG_GRADIENTS = [
@@ -243,7 +252,7 @@ function hashGradient(str) {
 
 export default {
   name: 'RestaurantDetail',
-  components: { PhotoStrip, DishGrid, ReviewForm },
+  components: { PhotoStrip, DishGrid, ReviewForm, AISummary },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -262,8 +271,35 @@ export default {
     const reviews = ref([])
     const reviewsLoading = ref(false)
     const selectedSource = ref(null)
+    const sourceDetailLoading = ref(false)
+
+    async function openSourceDetail(source) {
+      selectedSource.value = { ...source }
+      // 如果有 review_id，从后端获取完整评价
+      if (source.review_id && (!source.text || source.text.length < 100)) {
+        sourceDetailLoading.value = true
+        try {
+          const detail = await getReviewDetail(source.review_id)
+          if (detail) {
+            selectedSource.value = {
+              ...selectedSource.value,
+              text: detail.text || selectedSource.value.text,
+              rating: detail.rating || selectedSource.value.rating,
+              user_name: detail.user_name || selectedSource.value.user_name,
+              date: detail.date || selectedSource.value.date,
+            }
+          }
+        } catch {
+          // 获取失败时使用已有片段
+        } finally {
+          sourceDetailLoading.value = false
+        }
+      }
+    }
     const showReviewForm = ref(false)
     const editingReview = ref(null)
+
+    const businessId = computed(() => route.params.id || '')
 
     const starFloor = computed(() => Math.floor(restaurant.value.rating || 0))
     const starHalf = computed(() => (restaurant.value.rating || 0) % 1 >= 0.5 ? starFloor.value + 1 : 0)
@@ -303,7 +339,7 @@ export default {
         date: r.date || '',
         likes: r.useful || 0,
         replies: 0, photoCount: 0, photoBg: [],
-        source: r.source || 'yelp',
+        source: r.source || 'ingested',
         review_id: r.review_id || null,
       }))
 
@@ -348,7 +384,7 @@ export default {
             text: r.text || '',
             date: r.date || '',
             likes: r.useful || 0,
-            source: r.source || 'yelp',
+            source: r.source || 'ingested',
             review_id: r.review_id || null,
           }))
         } catch { /* keep empty */ }
@@ -380,7 +416,7 @@ export default {
                 text: r.text || '',
                 date: r.date || '',
                 likes: r.useful || 0,
-                source: r.source || 'yelp',
+                source: r.source || 'ingested',
                 review_id: r.review_id || null,
               }))
             }
@@ -455,7 +491,7 @@ export default {
             text: r.text || '',
             date: r.date || '',
             likes: r.useful || 0,
-            source: r.source || 'yelp',
+            source: r.source || 'ingested',
             review_id: r.review_id || null,
           }))
         }).catch(() => {}).finally(() => { reviewsLoading.value = false })
@@ -486,8 +522,8 @@ export default {
 
     return {
       heartActive, loading, error,
-      restaurant, photos, dishes, reviews, reviewsLoading,
-      heroBg, selectedSource, starFloor, starHalf, ratingPct,
+      businessId, restaurant, photos, dishes, reviews, reviewsLoading,
+      heroBg, selectedSource, sourceDetailLoading, openSourceDetail, starFloor, starHalf, ratingPct,
       toggleHeart, goToDashboard, loadData,
       sourceStarClass, sourceStarChar,
       showReviewForm, editingReview,
@@ -843,6 +879,7 @@ export default {
   width: 50%; overflow: hidden; color: var(--amber); pointer-events: none;
 }
 .source-full-text { font-size: var(--text-base); line-height: var(--leading-relaxed); color: var(--ink-light); }
+.source-loading { display: flex; align-items: center; gap: 4px; justify-content: center; padding: var(--space-4); }
 
 @media (min-width: 768px) { .detail-hero { height: 320px; } }
 @media (min-width: 1024px) { .page-detail { max-width: 900px; margin: 0 auto; } }

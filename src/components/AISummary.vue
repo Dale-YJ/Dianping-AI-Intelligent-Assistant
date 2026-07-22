@@ -5,18 +5,18 @@
       <span class="summary-label">AI 口碑摘要</span>
       <span class="summary-badge">Beta</span>
     </div>
-    <div class="summary-body" v-if="!loading">
+    <div class="summary-body" v-if="!isLoading">
       <div class="summary-section positive">
         <h5>👍 好评亮点</h5>
-        <p>{{ highlights }}</p>
+        <p>{{ displayHighlights || '暂无数据' }}</p>
       </div>
       <div class="summary-section negative">
         <h5>👎 差评槽点</h5>
-        <p>{{ complaints }}</p>
+        <p>{{ displayComplaints || '暂无数据' }}</p>
       </div>
-      <div class="summary-section recent" v-if="recent">
+      <div class="summary-section recent" v-if="displayRecent">
         <h5>📊 近期动态</h5>
-        <p>{{ recent }}</p>
+        <p>{{ displayRecent }}</p>
       </div>
     </div>
     <div class="summary-loading" v-else>
@@ -25,9 +25,9 @@
       <span class="typing-dot"></span>
       <span class="loading-text">正在分析评价...</span>
     </div>
-    <div class="summary-sources" v-if="!loading && sources.length">
+    <div class="summary-sources" v-if="!isLoading && displaySources.length">
       <SourceReference
-        v-for="(s, i) in sources"
+        v-for="(s, i) in displaySources"
         :key="i"
         v-bind="s"
         @click="$emit('source-click', s)"
@@ -37,19 +37,74 @@
 </template>
 
 <script>
+import { ref, watch } from 'vue'
 import SourceReference from './SourceReference.vue'
+import { getBusinessSummary } from '../api/modules/reviews.js'
 
 export default {
   name: 'AISummary',
   components: { SourceReference },
   props: {
+    businessId: { type: String, default: '' },
     highlights: { type: String, default: '' },
     complaints: { type: String, default: '' },
     recent: { type: String, default: '' },
     sources: { type: Array, default: () => [] },
     loading: { type: Boolean, default: false }
   },
-  emits: ['source-click']
+  emits: ['source-click'],
+  data() {
+    return {
+      fetchedHighlights: '',
+      fetchedComplaints: '',
+      fetchedRecent: '',
+      fetchedSources: [],
+      fetching: false,
+    }
+  },
+  computed: {
+    displayHighlights() { return this.highlights || this.fetchedHighlights },
+    displayComplaints() { return this.complaints || this.fetchedComplaints },
+    displayRecent() { return this.recent || this.fetchedRecent },
+    displaySources() { return this.sources.length ? this.sources : this.fetchedSources },
+    isLoading() { return this.loading || this.fetching },
+  },
+  watch: {
+    businessId: {
+      immediate: true,
+      handler(id) { if (id) this.fetchFromApi(id) },
+    },
+  },
+  methods: {
+    async fetchFromApi(bizId) {
+      if (!bizId || this.highlights) return
+      this.fetching = true
+      try {
+        const data = await getBusinessSummary(bizId)
+        if (data) {
+          const h = data.highlights
+          const c = data.concerns || data.lowlights
+          const r = data.recent_trend || data.recent_news || data.recent
+          if (h?.title) this.fetchedHighlights = h.title + '：' + (h.items || []).map(i => i.point).join('；')
+          else if (typeof h === 'string') this.fetchedHighlights = h
+          if (c?.title) this.fetchedComplaints = c.title + '：' + (c.items || []).map(i => i.point).join('；')
+          else if (typeof c === 'string') this.fetchedComplaints = c
+          if (r?.summary) this.fetchedRecent = r.summary
+          else if (typeof r === 'string') this.fetchedRecent = r
+          const allSources = []
+          for (const group of [h, c]) {
+            if (group?.items) {
+              for (const item of group.items) {
+                if (item.sources) allSources.push(...item.sources)
+              }
+            }
+          }
+          this.fetchedSources = allSources
+        }
+      } catch { /* 静默失败 */ }
+      finally { this.fetching = false }
+    },
+  },
 }
 </script>
 
