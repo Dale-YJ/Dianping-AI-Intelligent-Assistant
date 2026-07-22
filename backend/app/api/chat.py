@@ -143,3 +143,38 @@ async def clear_profile(conversation_id: str):
     """Clear user profile for a conversation."""
     await clear_user_profile(conversation_id)
     return {"status": "ok", "message": "Profile cleared"}
+
+
+# ── Quick Tags ──────────────────────────────────────────────
+
+QUICK_TAGS = [
+    {"id": "sichuan", "label": "川菜推荐", "icon": "🌶️", "prompt": "推荐好吃的川菜馆"},
+    {"id": "hotpot", "label": "火锅", "icon": "🍲", "prompt": "附近有什么好吃的火锅店？"},
+    {"id": "japanese", "label": "日料", "icon": "🍣", "prompt": "推荐一家正宗的日料店"},
+    {"id": "korean", "label": "韩式料理", "icon": "🥩", "prompt": "推荐好吃的韩式烤肉"},
+    {"id": "canton", "label": "粤菜", "icon": "🥟", "prompt": "推荐地道的粤菜馆"},
+    {"id": "western", "label": "西餐", "icon": "🍝", "prompt": "推荐一家不错的西餐厅"},
+    {"id": "bbq", "label": "烧烤", "icon": "🍖", "prompt": "推荐好吃的烧烤店"},
+    {"id": "seafood", "label": "海鲜", "icon": "🦞", "prompt": "推荐新鲜的海鲜餐厅"},
+    {"id": "date", "label": "约会餐厅", "icon": "💑", "prompt": "适合约会的浪漫餐厅"},
+    {"id": "family", "label": "家庭聚餐", "icon": "👨‍👩‍👧‍👦", "prompt": "适合家庭聚餐的餐厅"},
+    {"id": "business", "label": "商务宴请", "icon": "🍽️", "prompt": "适合商务宴请的高档餐厅"},
+    {"id": "friends", "label": "朋友聚会", "icon": "🎉", "prompt": "适合朋友聚会的热闹餐厅"},
+    {"id": "quiet", "label": "安静办公", "icon": "💻", "prompt": "适合安静办公的咖啡馆"},
+    {"id": "dessert", "label": "甜品咖啡", "icon": "🍰", "prompt": "推荐好吃的甜品店或咖啡馆"},
+    {"id": "vegetarian", "label": "素食", "icon": "🥬", "prompt": "推荐好吃的素食餐厅"},
+    {"id": "budget", "label": "经济实惠", "icon": "💰", "prompt": "推荐性价比高的平价美食"},
+]
+
+
+@router.get("/quick-tags")
+async def chat_quick_tags():
+    """Return quick-prompt tags with icons for the chat UI.
+
+    Each tag contains:
+      - id: unique identifier
+      - label: display name
+      - icon: emoji icon
+      - prompt: pre-filled message when user clicks the tag
+    """
+    return {"tags": QUICK_TAGS}

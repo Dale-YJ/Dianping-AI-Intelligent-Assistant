@@ -53,7 +53,7 @@ from reranker import rerank
 logger = logging.getLogger(__name__)
 
 BUSINESS_INDEX = "yelp_business"
-REVIEW_INDEX = "yelp_review"
+REVIEW_INDEX = "yelp_review,user_review"
 
 # ── Cuisine alias mapping ───────────────────────────────────
 # Common abbreviations → full cuisine names found in actual data.
@@ -436,11 +436,11 @@ def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
     client = get_opensearch_client()
     if not client.indices.exists(index=REVIEW_INDEX):
         return []
-    # business_id 在评价索引中是 text 类型，使用 match 查询
+    # 跨索引查询（yelp_review + user_review），两个索引无公共排序字段，
+    # 去掉 sort 避免 OpenSearch 报错，按 _score 返回即可。
     body = {
         "size": top_k,
         "query": {"bool": {"must": [{"match": {"business_id": business_id}}]}},
-        "sort": [{"useful": {"order": "desc"}}],
     }
     try:
         resp = client.search(index=REVIEW_INDEX, body=body)
@@ -891,8 +891,8 @@ def _build_recommendations(
         for r in reviews:
             sources.append(SourceInfo(
                 user_name=f"用户{str(r.get('user_id', '匿名'))[:8]}",
-                rating=float(r.get("stars", 0)),
-                date=str(r.get("date", "")),
+                rating=float(r.get("stars") or r.get("rating", 0)),
+                date=str(r.get("date") or r.get("created_at", "")),
                 text=str(r.get("text", ""))[:300],
                 business_name=str(biz.get("name", "")),
             ))
