@@ -7,12 +7,15 @@ This module ties together the separated concerns:
 - ``search_service`` — OpenSearch retrieval
 - ``query_rewriter`` — LLM-based query → concrete search conditions
 - ``reranker`` — embedding-similarity re-ranking (bge-base-zh-v1.5)
+- ``user_profile`` — user preference learning from conversation history
 
 Pipeline (updated):
-    1. User query → rewrite_query() → concrete keywords + categories
-    2. hybrid_search() with expanded candidate pool
-    3. rerank() with bge-reranker-v2-m3 cross-encoder
-    4. build_context() → LLM streaming → recommendations
+    1. Load user profile from conversation history
+    2. User query → rewrite_query() → concrete keywords + categories
+    3. hybrid_search() with expanded candidate pool
+    4. rerank() with bge-reranker-v2-m3 cross-encoder
+    5. build_context() → LLM streaming → recommendations
+    6. Analyze conversation → update user profile
 """
 
 from __future__ import annotations
@@ -30,10 +33,17 @@ from .conversation import (
 from backend.app.services.llm_client import get_llm
 from .prompts import (
     SYSTEM_PROMPT,
+    BUSINESS_ANALYSIS_SYSTEM_PROMPT,
     build_context,
     build_user_prompt,
+    build_business_analysis_prompt,
 )
 from .query_rewriter import rewrite_query, build_search_query
+from .user_profile import (
+    get_user_profile,
+    format_profile_for_prompt,
+)
+from .profile_analyzer import analyze_conversation_for_profile
 
 # 统一使用 base_config 的 OpenSearch 客户端和检索接口
 from opensearch_client import get_opensearch_client
@@ -438,6 +448,18 @@ def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
     return [h["_source"] for h in resp.get("hits", {}).get("hits", [])]
 
 
+def _get_business_info(business_id: str) -> dict | None:
+    """Get a single business document from OpenSearch by ID."""
+    client = get_opensearch_client()
+    try:
+        resp = client.get(index=BUSINESS_INDEX, id=business_id, ignore=[404])
+        if resp.get("found"):
+            return dict(resp["_source"])
+        return None
+    except Exception:
+        return None
+
+
 # ═══════════════════════════════════════════════════════════════
 # Main RAG stream
 # ═══════════════════════════════════════════════════════════════
@@ -445,38 +467,60 @@ def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
 async def rag_stream(
     query: str,
     conversation_id: str | None = None,
+    business_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Execute the full RAG pipeline and yield SSE-formatted strings.
 
-    Pipeline steps:
+    Two modes:
+      - **User mode** (default): RAG search → LLM recommendation
+      - **Business mode** (when ``business_id`` is set): fetch reviews → LLM analysis
+
+    Pipeline steps (user mode):
     1. Resolve / create conversation
     2. Store user message
-    3. Search OpenSearch for matching businesses
-    4. If no results → fallback with clarifying prompt
-    5. Build RAG context + user prompt
-    6. Stream LLM response token-by-token
-    7. Store assistant response
-    8. Yield structured recommendations
-    9. Signal completion
+    3. Load user profile
+    4. Search OpenSearch for matching businesses
+    5. If no results → fallback with clarifying prompt
+    6. Build RAG context + user prompt (with profile)
+    7. Stream LLM response token-by-token
+    8. Store assistant response
+    9. Analyze conversation and update user profile
+    10. Yield structured recommendations
+    11. Signal completion
 
     Yields:
         SSE event strings (``data: {...}\n\n``).
     """
     conv_id = await get_or_create_conversation(conversation_id)
 
+    # ── Business-side analysis path ──
+    if business_id:
+        async for event in _analyze_business_stream(query, conv_id, business_id):
+            yield event
+        return
+
     # 1. yield start event
-    yield _sse("start", {"conversation_id": conv_id})
+    yield _sse("start", {"conversation_id": conv_id, "mode": "user"})
 
     # 2. store user message
     await add_message(conv_id, "user", query)
 
-    # 3. search (with query rewriting + reranking)
+    # 3. Load user profile
+    user_profile = await get_user_profile(conv_id)
+    profile_text = format_profile_for_prompt(user_profile)
+
+    # 4. search (with query rewriting + reranking)
     businesses = await _search_with_rewrite_and_rerank(query)
 
-    # 4. no search results → let LLM chat naturally (handles greetings, small talk)
+    # 5. no search results → let LLM chat naturally (handles greetings, small talk)
     if not businesses:
         history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Add profile to system context if available
+        if profile_text:
+            chat_messages.append({"role": "system", "content": profile_text})
+
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
         # Ensure the current user query is in the prompt (history[-6:] may truncate it)
@@ -494,19 +538,37 @@ async def rag_stream(
             yield _sse("delta", {"content": full_response})
 
         await add_message(conv_id, "assistant", full_response)
+
+        # Analyze and update user profile
+        try:
+            profile_data = await analyze_conversation_for_profile(query, full_response)
+            if any([
+                profile_data.get("locations"),
+                profile_data.get("cuisine_preferences"),
+                profile_data.get("taste_preferences"),
+                profile_data.get("dining_scenarios"),
+                profile_data.get("budget_level"),
+                profile_data.get("other_keywords"),
+            ]):
+                from .user_profile import update_user_profile
+                await update_user_profile(conv_id, profile_data)
+                logger.info(f"Updated user profile for conversation {conv_id}")
+        except Exception as e:
+            logger.warning(f"Failed to update user profile: {e}")
+
         yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
         yield _sse("done", {"total_tokens": len(full_response)})
         return
 
-    # 5. build context & prompt
+    # 6. build context & prompt (with profile)
     context = build_context(businesses)
     history = await get_history(conv_id)
-    user_prompt = build_user_prompt(query, context, history)
+    user_prompt = build_user_prompt(query, context, history, profile_text)
 
-    # 6. prepare structured recommendations
+    # 7. prepare structured recommendations
     recs = _build_recommendations(businesses)
 
-    # 7. stream LLM response
+    # 8. stream LLM response
     llm = get_llm()
     full_response = ""
 
@@ -525,16 +587,33 @@ async def rag_stream(
         full_response = error_msg
         yield _sse("delta", {"content": error_msg})
 
-    # 8. store assistant response
+    # 9. store assistant response
     await add_message(conv_id, "assistant", full_response)
 
-    # 9. yield recommendations
+    # 10. Analyze conversation and update user profile
+    try:
+        profile_data = await analyze_conversation_for_profile(query, full_response)
+        if any([
+            profile_data.get("locations"),
+            profile_data.get("cuisine_preferences"),
+            profile_data.get("taste_preferences"),
+            profile_data.get("dining_scenarios"),
+            profile_data.get("budget_level"),
+            profile_data.get("other_keywords"),
+        ]):
+            from .user_profile import update_user_profile
+            await update_user_profile(conv_id, profile_data)
+            logger.info(f"Updated user profile for conversation {conv_id}")
+    except Exception as e:
+        logger.warning(f"Failed to update user profile: {e}")
+
+    # 11. yield recommendations
     recs_json = json.dumps(
         [r.model_dump() for r in recs], ensure_ascii=False
     )
     yield f"data: {{\"type\": \"recommendations\", \"items\": {recs_json}}}\n\n"
 
-    # 10. done
+    # 12. done
     yield _sse("done", {"total_tokens": len(full_response)})
 
 
@@ -545,12 +624,25 @@ async def rag_stream(
 async def rag_generate(
     query: str,
     conversation_id: str | None = None,
+    business_id: str | None = None,
 ) -> tuple[str, str, list[RecommendationItem]]:
     """Non-streaming RAG: returns (conversation_id, text, recommendations).
+
+    Two modes:
+      - **User mode** (default): RAG search → LLM recommendation
+      - **Business mode** (when ``business_id`` is set): fetch reviews → LLM analysis
 
     Useful for debugging or batch processing where streaming is unnecessary.
     """
     conv_id = await get_or_create_conversation(conversation_id)
+
+    # ── Business-side analysis path ──
+    if business_id:
+        return await _analyze_business_generate(query, conv_id, business_id)
+
+    # Load user profile
+    user_profile = await get_user_profile(conv_id)
+    profile_text = format_profile_for_prompt(user_profile)
 
     # search (with query rewriting + reranking)
     businesses = await _search_with_rewrite_and_rerank(query)
@@ -558,6 +650,11 @@ async def rag_generate(
     if not businesses:
         history = await get_history(conv_id)
         chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Add profile to system context if available
+        if profile_text:
+            chat_messages.append({"role": "system", "content": profile_text})
+
         for m in history[-6:]:
             chat_messages.append({"role": m["role"], "content": m["content"]})
         # Ensure the current user query is in the prompt (history[-6:] may truncate it)
@@ -571,12 +668,29 @@ async def rag_generate(
         except Exception:
             text = "你好！我是大众点评 AI 小探 🍴 告诉我你想吃什么，我帮你找最合适的餐厅～"
         await add_message(conv_id, "assistant", text)
+
+        # Analyze and update user profile
+        try:
+            profile_data = await analyze_conversation_for_profile(query, text)
+            if any([
+                profile_data.get("locations"),
+                profile_data.get("cuisine_preferences"),
+                profile_data.get("taste_preferences"),
+                profile_data.get("dining_scenarios"),
+                profile_data.get("budget_level"),
+                profile_data.get("other_keywords"),
+            ]):
+                from .user_profile import update_user_profile
+                await update_user_profile(conv_id, profile_data)
+        except Exception as e:
+            logger.warning(f"Failed to update user profile: {e}")
+
         return conv_id, text, []
 
     # build
     context = build_context(businesses)
     history = await get_history(conv_id)
-    user_prompt = build_user_prompt(query, context, history)
+    user_prompt = build_user_prompt(query, context, history, profile_text)
 
     await add_message(conv_id, "user", query)
 
@@ -592,9 +706,155 @@ async def rag_generate(
         text = f"抱歉，AI 服务暂时不可用: {e}"
 
     await add_message(conv_id, "assistant", text)
+
+    # Analyze and update user profile
+    try:
+        profile_data = await analyze_conversation_for_profile(query, text)
+        if any([
+            profile_data.get("locations"),
+            profile_data.get("cuisine_preferences"),
+            profile_data.get("taste_preferences"),
+            profile_data.get("dining_scenarios"),
+            profile_data.get("budget_level"),
+            profile_data.get("other_keywords"),
+        ]):
+            from .user_profile import update_user_profile
+            await update_user_profile(conv_id, profile_data)
+    except Exception as e:
+        logger.warning(f"Failed to update user profile: {e}")
+
     recs = _build_recommendations(businesses)
 
     return conv_id, text, recs
+
+
+# ═══════════════════════════════════════════════════════════════
+# Business-side analysis (口碑分析)
+# ═══════════════════════════════════════════════════════════════
+
+async def _analyze_business_stream(
+    query: str,
+    conv_id: str,
+    business_id: str,
+) -> AsyncIterator[str]:
+    """Business-side analysis pipeline (streaming).
+
+    Steps:
+    1. Fetch business info from OpenSearch
+    2. Fetch reviews for this business
+    3. Build analysis prompt
+    4. Stream LLM response
+    5. Store assistant response
+    6. Yield empty recommendations + done event
+    """
+    # 1. Yield start event (with mode for frontend)
+    yield _sse("start", {"conversation_id": conv_id, "mode": "business"})
+
+    # 2. Store user message
+    await add_message(conv_id, "user", query)
+
+    # 3. Fetch business info
+    business = _get_business_info(business_id)
+    if not business:
+        error_msg = f"抱歉，未找到该商家信息（ID: {business_id}）。请确认商家 ID 是否正确。"
+        yield _sse("delta", {"content": error_msg})
+        await add_message(conv_id, "assistant", error_msg)
+        yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
+        yield _sse("done", {"total_tokens": 0})
+        return
+
+    # 4. Fetch reviews
+    reviews = _search_reviews(business_id, top_k=50)
+    if not reviews:
+        no_reviews_msg = (
+            f"「{business.get('name', '该商家')}」目前还没有顾客评价。\n\n"
+            "建议引导顾客在消费后留下评价，这样我就能帮你分析口碑啦～"
+        )
+        yield _sse("delta", {"content": no_reviews_msg})
+        await add_message(conv_id, "assistant", no_reviews_msg)
+        yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
+        yield _sse("done", {"total_tokens": 0})
+        return
+
+    # 5. Build analysis prompt
+    history = await get_history(conv_id)
+    user_prompt = build_business_analysis_prompt(query, business, reviews, history)
+
+    # 6. Stream LLM response
+    llm = get_llm()
+    full_response = ""
+
+    try:
+        messages = [
+            {"role": "system", "content": BUSINESS_ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        async for chunk in llm.astream(messages):
+            if chunk.content:
+                full_response += chunk.content
+                yield _sse("delta", {"content": chunk.content})
+
+    except Exception as e:
+        error_msg = f"抱歉，AI 服务暂时不可用，请稍后重试。({e})"
+        full_response = error_msg
+        yield _sse("delta", {"content": error_msg})
+
+    # 7. Store assistant response
+    await add_message(conv_id, "assistant", full_response)
+
+    # 8. Yield empty recommendations + done
+    yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
+    yield _sse("done", {"total_tokens": len(full_response)})
+
+
+async def _analyze_business_generate(
+    query: str,
+    conv_id: str,
+    business_id: str,
+) -> tuple[str, str, list[RecommendationItem]]:
+    """Business-side analysis pipeline (non-streaming).
+
+    Returns:
+        (conversation_id, text, []) — recommendations is always empty for analysis.
+    """
+    await add_message(conv_id, "user", query)
+
+    # Fetch business info
+    business = _get_business_info(business_id)
+    if not business:
+        text = f"抱歉，未找到该商家信息（ID: {business_id}）。请确认商家 ID 是否正确。"
+        await add_message(conv_id, "assistant", text)
+        return conv_id, text, []
+
+    # Fetch reviews
+    reviews = _search_reviews(business_id, top_k=50)
+    if not reviews:
+        text = (
+            f"「{business.get('name', '该商家')}」目前还没有顾客评价。\n\n"
+            "建议引导顾客在消费后留下评价，这样我就能帮你分析口碑啦～"
+        )
+        await add_message(conv_id, "assistant", text)
+        return conv_id, text, []
+
+    # Build prompt
+    history = await get_history(conv_id)
+    user_prompt = build_business_analysis_prompt(query, business, reviews, history)
+
+    # Invoke LLM
+    llm = get_llm()
+    try:
+        messages = [
+            {"role": "system", "content": BUSINESS_ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        resp = await llm.ainvoke(messages)
+        text = resp.content or ""
+    except Exception as e:
+        text = f"抱歉，AI 服务暂时不可用: {e}"
+
+    await add_message(conv_id, "assistant", text)
+
+    return conv_id, text, []
 
 
 # ═══════════════════════════════════════════════════════════════

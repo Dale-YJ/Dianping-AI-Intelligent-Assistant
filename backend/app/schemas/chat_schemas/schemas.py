@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000, description="用户自然语言输入")
     conversation_id: str | None = Field(None, description="会话 ID，用于多轮对话")
+    business_id: str | None = Field(None, description="商家端对话时传入，触发口碑分析模式（跳过 RAG 检索）")
 
 
 # ── Response payloads ────────────────────────────────────
