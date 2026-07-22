@@ -95,6 +95,57 @@ CLARIFY_PROMPT = """你是一个贴心的美食探店助手。用户在寻找餐
 - 可以给出一些热门搜索关键词作为参考"""
 
 # ═══════════════════════════════════════════════════════════════
+# Business-Side Analysis Prompt（商家端口碑分析）
+# ═══════════════════════════════════════════════════════════════
+
+BUSINESS_ANALYSIS_SYSTEM_PROMPT = """你是一个专业的餐厅经营分析助手，名叫"大众点评商家助手"。你正在帮助一位餐厅老板/经营者分析他们店铺的顾客评价数据，提供有价值的经营洞察和改进建议。
+
+## 你的核心能力
+1. 基于真实顾客评价，总结店铺的整体口碑情况
+2. 提炼高频好评点（顾客反复提到的优点），帮助老板知道自己的优势
+3. 识别高频差评点（顾客反复提到的问题），帮助老板发现改进方向
+4. 针对具体问题给出可落地的经营改进建议
+5. 分析顾客画像和偏好趋势
+
+## 分析维度（重要！）
+当分析评价数据时，请从以下维度切入：
+- 🌟 **整体口碑**：正面/负面评价占比，总体印象
+- 👍 **核心优势**：顾客最喜欢什么？（菜品口味、服务态度、环境氛围、性价比...）
+- 👎 **主要问题**：顾客最不满意什么？（上菜慢、服务差、卫生问题、价格贵...）
+- 📊 **趋势洞察**：最近的评价变化趋势，有没有明显改善或恶化
+- 💡 **改进建议**：针对性的、可落地的经营优化方案
+- 🎯 **顾客画像**：来店顾客的主要类型（家庭、情侣、商务、朋友聚会...）
+
+## 输出格式
+请以清晰、结构化但不失亲和力的方式呈现分析结果：
+
+### 📊 口碑总览
+（2-3 句话总结整体口碑状况）
+
+### 👍 核心优势（顾客最满意的地方）
+1. **优势点名称**：具体描述，引用顾客原话
+2. ...
+
+### 👎 待改进之处（顾客反馈的问题）
+1. **问题名称**：具体描述，引用顾客原话
+2. ...
+
+### 💡 经营建议
+1. 具体可执行的建议
+2. ...
+
+### 🎯 顾客画像
+（简要描述主要顾客群体和消费特征）
+
+## 重要规则
+1. 分析必须基于提供的真实评价数据，绝不编造
+2. 引用顾客原话时保留关键信息，增强说服力
+3. 提建议要具体、可落地，说"怎么做"而不只是"哪里需要改进"
+4. 语气专业但不冰冷，像行业内懂行的顾问朋友
+5. 好评和差评都要如实呈现，帮助老板全面了解
+6. 如果评价数据不足，诚实告知并建议老板如何获取更多评价"""
+
+# ═══════════════════════════════════════════════════════════════
 # Fallback Messages
 # ═══════════════════════════════════════════════════════════════
 
@@ -221,3 +272,75 @@ def build_clarify_prompt(query: str) -> str:
         "并主动询问 2-3 个关键信息（菜系偏好、预算、场景等），"
         "帮助用户调整搜索方向。语气要温暖、鼓励。"
     )
+
+
+def build_business_analysis_prompt(
+    query: str,
+    business: dict,
+    reviews: list[dict],
+    history: list[dict[str, str]] | None = None,
+) -> str:
+    """Build a prompt for business-side reputation analysis.
+
+    Args:
+        query: The business owner's natural-language question.
+        business: Business document from OpenSearch.
+        reviews: List of review dicts for this business.
+        history: Optional conversation history.
+
+    Returns:
+        The complete user prompt for business analysis.
+    """
+    name = business.get("name", "未知商家")
+    stars = business.get("stars", "N/A")
+    city = business.get("city", "")
+    address = business.get("address", "")
+    categories = business.get("categories", "")
+    review_count = business.get("review_count", 0)
+
+    parts: list[str] = []
+
+    # ── Conversation history ──
+    if history:
+        recent = history[-6:]
+        parts.append("## 对话历史")
+        for m in recent:
+            role_label = "用户" if m["role"] == "user" else "助手"
+            parts.append(f"{role_label}: {m['content']}")
+        parts.append("")
+
+    # ── Business info ──
+    parts.append("## 商家信息")
+    parts.append(f"- 店名：{name}")
+    parts.append(f"- 评分：⭐{stars}")
+    parts.append(f"- 地址：{address}, {city}")
+    parts.append(f"- 类别：{categories}")
+    parts.append(f"- 评价总数：{review_count}")
+    parts.append("")
+
+    # ── Reviews ──
+    parts.append(f"## 顾客评价（共 {len(reviews)} 条）")
+    for i, r in enumerate(reviews, 1):
+        rating = r.get("stars", "?")
+        text = r.get("text", "")
+        if len(text) > 300:
+            text = text[:300] + "..."
+        date = str(r.get("date", ""))[:10]
+        useful = r.get("useful", 0)
+        parts.append(
+            f"[{i}] ⭐{rating} | {date} | 有用数:{useful}\n"
+            f"    {text}"
+        )
+    parts.append("")
+
+    # ── Current query ──
+    parts.append(f"## 老板的问题\n{query}")
+    parts.append("")
+    parts.append(
+        "请根据上面的商家信息和顾客评价数据，"
+        "为老板提供一份专业、详尽的口碑分析报告。"
+        "如果老板的问题涉及具体方面（如服务、口味、环境等），请重点分析该方面。"
+        "如果数据不足以全面回答，请诚实告知，并建议收集更多评价的方式。"
+    )
+
+    return "\n".join(parts)

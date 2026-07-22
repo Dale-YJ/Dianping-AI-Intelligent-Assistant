@@ -73,7 +73,7 @@ async def chat_stream(req: ChatRequest):
       - ``done``            → stream complete
     """
     return StreamingResponse(
-        rag_stream(req.message, req.conversation_id),
+        rag_stream(req.message, req.conversation_id, req.business_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -86,7 +86,7 @@ async def chat_stream(req: ChatRequest):
 @router.post("/send", response_model=ChatResponse)
 async def chat_send(req: ChatRequest):
     """Non-streaming fallback: returns the complete AI response at once."""
-    conv_id, text, recs = await rag_generate(req.message, req.conversation_id)
+    conv_id, text, recs = await rag_generate(req.message, req.conversation_id, req.business_id)
 
     is_fallback = len(recs) == 0
 

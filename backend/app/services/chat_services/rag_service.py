@@ -33,8 +33,10 @@ from .conversation import (
 from backend.app.services.llm_client import get_llm
 from .prompts import (
     SYSTEM_PROMPT,
+    BUSINESS_ANALYSIS_SYSTEM_PROMPT,
     build_context,
     build_user_prompt,
+    build_business_analysis_prompt,
 )
 from .query_rewriter import rewrite_query, build_search_query
 from .user_profile import (
@@ -446,6 +448,18 @@ def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
     return [h["_source"] for h in resp.get("hits", {}).get("hits", [])]
 
 
+def _get_business_info(business_id: str) -> dict | None:
+    """Get a single business document from OpenSearch by ID."""
+    client = get_opensearch_client()
+    try:
+        resp = client.get(index=BUSINESS_INDEX, id=business_id, ignore=[404])
+        if resp.get("found"):
+            return dict(resp["_source"])
+        return None
+    except Exception:
+        return None
+
+
 # ═══════════════════════════════════════════════════════════════
 # Main RAG stream
 # ═══════════════════════════════════════════════════════════════
@@ -453,10 +467,15 @@ def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
 async def rag_stream(
     query: str,
     conversation_id: str | None = None,
+    business_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Execute the full RAG pipeline and yield SSE-formatted strings.
 
-    Pipeline steps:
+    Two modes:
+      - **User mode** (default): RAG search → LLM recommendation
+      - **Business mode** (when ``business_id`` is set): fetch reviews → LLM analysis
+
+    Pipeline steps (user mode):
     1. Resolve / create conversation
     2. Store user message
     3. Load user profile
@@ -474,8 +493,14 @@ async def rag_stream(
     """
     conv_id = await get_or_create_conversation(conversation_id)
 
+    # ── Business-side analysis path ──
+    if business_id:
+        async for event in _analyze_business_stream(query, conv_id, business_id):
+            yield event
+        return
+
     # 1. yield start event
-    yield _sse("start", {"conversation_id": conv_id})
+    yield _sse("start", {"conversation_id": conv_id, "mode": "user"})
 
     # 2. store user message
     await add_message(conv_id, "user", query)
@@ -599,12 +624,21 @@ async def rag_stream(
 async def rag_generate(
     query: str,
     conversation_id: str | None = None,
+    business_id: str | None = None,
 ) -> tuple[str, str, list[RecommendationItem]]:
     """Non-streaming RAG: returns (conversation_id, text, recommendations).
+
+    Two modes:
+      - **User mode** (default): RAG search → LLM recommendation
+      - **Business mode** (when ``business_id`` is set): fetch reviews → LLM analysis
 
     Useful for debugging or batch processing where streaming is unnecessary.
     """
     conv_id = await get_or_create_conversation(conversation_id)
+
+    # ── Business-side analysis path ──
+    if business_id:
+        return await _analyze_business_generate(query, conv_id, business_id)
 
     # Load user profile
     user_profile = await get_user_profile(conv_id)
@@ -692,6 +726,135 @@ async def rag_generate(
     recs = _build_recommendations(businesses)
 
     return conv_id, text, recs
+
+
+# ═══════════════════════════════════════════════════════════════
+# Business-side analysis (口碑分析)
+# ═══════════════════════════════════════════════════════════════
+
+async def _analyze_business_stream(
+    query: str,
+    conv_id: str,
+    business_id: str,
+) -> AsyncIterator[str]:
+    """Business-side analysis pipeline (streaming).
+
+    Steps:
+    1. Fetch business info from OpenSearch
+    2. Fetch reviews for this business
+    3. Build analysis prompt
+    4. Stream LLM response
+    5. Store assistant response
+    6. Yield empty recommendations + done event
+    """
+    # 1. Yield start event (with mode for frontend)
+    yield _sse("start", {"conversation_id": conv_id, "mode": "business"})
+
+    # 2. Store user message
+    await add_message(conv_id, "user", query)
+
+    # 3. Fetch business info
+    business = _get_business_info(business_id)
+    if not business:
+        error_msg = f"抱歉，未找到该商家信息（ID: {business_id}）。请确认商家 ID 是否正确。"
+        yield _sse("delta", {"content": error_msg})
+        await add_message(conv_id, "assistant", error_msg)
+        yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
+        yield _sse("done", {"total_tokens": 0})
+        return
+
+    # 4. Fetch reviews
+    reviews = _search_reviews(business_id, top_k=50)
+    if not reviews:
+        no_reviews_msg = (
+            f"「{business.get('name', '该商家')}」目前还没有顾客评价。\n\n"
+            "建议引导顾客在消费后留下评价，这样我就能帮你分析口碑啦～"
+        )
+        yield _sse("delta", {"content": no_reviews_msg})
+        await add_message(conv_id, "assistant", no_reviews_msg)
+        yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
+        yield _sse("done", {"total_tokens": 0})
+        return
+
+    # 5. Build analysis prompt
+    history = await get_history(conv_id)
+    user_prompt = build_business_analysis_prompt(query, business, reviews, history)
+
+    # 6. Stream LLM response
+    llm = get_llm()
+    full_response = ""
+
+    try:
+        messages = [
+            {"role": "system", "content": BUSINESS_ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        async for chunk in llm.astream(messages):
+            if chunk.content:
+                full_response += chunk.content
+                yield _sse("delta", {"content": chunk.content})
+
+    except Exception as e:
+        error_msg = f"抱歉，AI 服务暂时不可用，请稍后重试。({e})"
+        full_response = error_msg
+        yield _sse("delta", {"content": error_msg})
+
+    # 7. Store assistant response
+    await add_message(conv_id, "assistant", full_response)
+
+    # 8. Yield empty recommendations + done
+    yield f"data: {{\"type\": \"recommendations\", \"items\": []}}\n\n"
+    yield _sse("done", {"total_tokens": len(full_response)})
+
+
+async def _analyze_business_generate(
+    query: str,
+    conv_id: str,
+    business_id: str,
+) -> tuple[str, str, list[RecommendationItem]]:
+    """Business-side analysis pipeline (non-streaming).
+
+    Returns:
+        (conversation_id, text, []) — recommendations is always empty for analysis.
+    """
+    await add_message(conv_id, "user", query)
+
+    # Fetch business info
+    business = _get_business_info(business_id)
+    if not business:
+        text = f"抱歉，未找到该商家信息（ID: {business_id}）。请确认商家 ID 是否正确。"
+        await add_message(conv_id, "assistant", text)
+        return conv_id, text, []
+
+    # Fetch reviews
+    reviews = _search_reviews(business_id, top_k=50)
+    if not reviews:
+        text = (
+            f"「{business.get('name', '该商家')}」目前还没有顾客评价。\n\n"
+            "建议引导顾客在消费后留下评价，这样我就能帮你分析口碑啦～"
+        )
+        await add_message(conv_id, "assistant", text)
+        return conv_id, text, []
+
+    # Build prompt
+    history = await get_history(conv_id)
+    user_prompt = build_business_analysis_prompt(query, business, reviews, history)
+
+    # Invoke LLM
+    llm = get_llm()
+    try:
+        messages = [
+            {"role": "system", "content": BUSINESS_ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        resp = await llm.ainvoke(messages)
+        text = resp.content or ""
+    except Exception as e:
+        text = f"抱歉，AI 服务暂时不可用: {e}"
+
+    await add_message(conv_id, "assistant", text)
+
+    return conv_id, text, []
 
 
 # ═══════════════════════════════════════════════════════════════
