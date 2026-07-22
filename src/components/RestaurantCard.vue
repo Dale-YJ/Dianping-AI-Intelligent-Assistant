@@ -13,7 +13,6 @@
         <span v-for="tag in tags" :key="tag" class="rc-tag">{{ tag }}</span>
       </div>
       <div class="rc-info">
-        <span class="rc-price">{{ price }}/人</span>
         <span>{{ area }}</span>
         <span>{{ distance }}</span>
       </div>
@@ -59,6 +58,9 @@ export default {
   width: 110px; height: 110px;
   border-radius: var(--radius-md);
   flex-shrink: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .rc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }

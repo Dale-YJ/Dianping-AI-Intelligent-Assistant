@@ -5,7 +5,7 @@
         <component :is="Component" />
       </transition>
     </router-view>
-    <AppTabBar />
+    <AppTabBar v-if="$route.name !== 'landing'" />
   </div>
 </template>
 

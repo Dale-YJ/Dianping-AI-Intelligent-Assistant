@@ -10,9 +10,14 @@
             <p class="brand-sub">3 公里生活圈 · 智能推荐</p>
           </div>
         </div>
-        <button class="header-action" @click="clearChat" v-if="messages.length > 1">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-        </button>
+        <div class="header-actions">
+          <button class="header-action" @click="openHistory" title="对话记录">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </button>
+          <button class="header-action" @click="clearChat" v-if="messages.length > 1" title="重置对话">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          </button>
+        </div>
       </div>
 
       <div class="chat-messages" ref="msgContainer">
@@ -32,27 +37,63 @@
         </div>
 
         <!-- Messages -->
-        <template v-for="(msg, i) in messages" :key="i">
+        <template v-for="(msg, i) in displayMessages" :key="i">
           <!-- User message -->
-          <ChatBubble role="user" :time="msg.time" v-if="msg.role === 'user'">
+          <ChatBubble
+            v-if="msg.role === 'user' && !msg.thinking"
+            role="user"
+            :time="msg.time"
+            :is-first-in-group="isFirstInGroup(i, 'user')"
+            :is-last-in-group="isLastInGroup(i, 'user')"
+          >
             {{ msg.text }}
           </ChatBubble>
 
+          <!-- AI thinking -->
+          <ChatBubble
+            v-else-if="msg.role === 'ai' && msg.thinking"
+            role="ai"
+          >
+            <TypingIndicator label="正在为你寻找..." />
+          </ChatBubble>
+
           <!-- AI response -->
-          <ChatBubble role="ai" :time="msg.time" v-else-if="msg.role === 'ai'">
-            <p class="ai-intro" v-if="msg.intro">{{ msg.intro }}</p>
-            <div class="rec-list" v-if="msg.recs && msg.recs.length && !isDesktop">
-              <RecommendationCard
-                v-for="(rec, j) in msg.recs"
-                :key="j"
-                v-bind="rec"
-                :style="{ animationDelay: (j * 0.1) + 's' }"
-                @click="goToShop(rec)"
-                @source-click="s => showSource(s)"
-              />
+          <ChatBubble
+            v-else-if="msg.role === 'ai'"
+            role="ai"
+            :time="msg.time"
+            :is-first-in-group="isFirstInGroup(i, 'ai')"
+            :is-last-in-group="isLastInGroup(i, 'ai')"
+          >
+            <AIReplyContent :text="msg.intro" v-if="msg.intro" />
+            <div class="rec-section" v-if="msg.recs && msg.recs.length && !isDesktop">
+              <div class="rec-section-header">
+                <span class="section-label">📋 推荐结果</span>
+                <span class="section-badge">{{ msg.recs.length }} 家</span>
+              </div>
+              <div class="rec-list">
+                <RecommendationCard
+                  v-for="(rec, j) in msg.recs"
+                  :key="j"
+                  v-bind="rec"
+                  :rank="j + 1"
+                  :style="{ animationDelay: (j * 0.1) + 's' }"
+                  @click="goToShop(rec)"
+                  @source-click="s => showSource(s)"
+                />
+              </div>
             </div>
-            <div class="fallback-msg" v-if="msg.fallback">
-              <p>😅 {{ msg.fallback }}</p>
+            <!-- Fallback suggestion chips -->
+            <div class="fallback-chips" v-if="msg.fallback && quickQueries.length">
+              <p class="fallback-chip-hint">试试这些热门搜索：</p>
+              <div class="chip-row">
+                <button
+                  v-for="q in quickQueries.slice(0, 3)"
+                  :key="q"
+                  class="fallback-chip"
+                  @click="sendMessage(q)"
+                >{{ q }}</button>
+              </div>
             </div>
           </ChatBubble>
         </template>
@@ -73,14 +114,21 @@
         <h2 class="side-title">推荐结果</h2>
       </div>
       <div class="side-panel-body">
-        <RecommendationCard
-          v-for="(rec, j) in latestRecs"
-          :key="j"
-          v-bind="rec"
-          :style="{ animationDelay: (j * 0.08) + 's' }"
-          @click="goToShop(rec.id)"
-          @source-click="s => showSource(s)"
-        />
+        <template v-for="(round, ri) in recRounds" :key="ri">
+          <!-- 轮次分隔：显示用户的原始提问 -->
+          <div class="round-divider" v-if="recRounds.length > 1">
+            <span class="round-query">{{ round.query }}</span>
+          </div>
+          <RecommendationCard
+            v-for="(rec, j) in round.recs"
+            :key="rec.id || rec.business_id || j"
+            v-bind="rec"
+            :rank="j + 1"
+            :style="{ animationDelay: (j * 0.06) + 's' }"
+            @click="goToShop(rec)"
+            @source-click="s => showSource(s)"
+          />
+        </template>
       </div>
     </div>
 
@@ -109,17 +157,36 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- Chat History Panel -->
+    <ChatHistoryPanel
+      :visible="showHistory"
+      :conversations="historyConversations"
+      :current-id="conversationId"
+      @close="closeHistory"
+      @new-chat="startNewChat"
+      @load-conversation="loadHistoryConversation"
+      @delete-conversation="handleDeleteConversation"
+    />
   </div>
 </template>
 
 <script>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import ChatInput from '../components/ChatInput.vue'
 import ChatBubble from '../components/ChatBubble.vue'
 import RecommendationCard from '../components/RecommendationCard.vue'
+import TypingIndicator from '../components/TypingIndicator.vue'
+import AIReplyContent from '../components/AIReplyContent.vue'
+import ChatHistoryPanel from '../components/ChatHistoryPanel.vue'
 import { postChatSend } from '../api/modules/chat.js'
+import { getBusinessDetail } from '../api/modules/business.js'
 import { sharedStore } from '../stores/sharedData.js'
+import { useChatHistory } from '../composables/useChatHistory.js'
 import { useTranslate } from '../composables/useTranslate.js'
+import { hasNonChinaLocation, extractCity } from '../utils/detectRegion.js'
+import { extractCuisineMatcher } from '../utils/detectCuisine.js'
 
 /* ─── 推荐数据映射: API → 组件 props ─── */
 const IMG_GRADIENTS = [
@@ -140,6 +207,11 @@ function hashGradient(str) {
 }
 
 function mapRecommendation(apiRec) {
+  // 优先使用商家真实照片，没有则降级为渐变色占位
+  const photoUrl = apiRec.photo_url
+    || (Array.isArray(apiRec.photos) && apiRec.photos[0])
+    || null
+
   return {
     id: apiRec.business_id,
     name: apiRec.name,
@@ -152,7 +224,10 @@ function mapRecommendation(apiRec) {
     address: apiRec.address || '',
     city: apiRec.city || '',
     score: apiRec.score || 0,
-    imgBg: hashGradient(apiRec.business_id || apiRec.name),
+    imgBg: photoUrl
+      ? `url(${photoUrl}) center/cover no-repeat`
+      : hashGradient(apiRec.business_id || apiRec.name),
+    photos: apiRec.photos || [],
     sources: (apiRec.sources || []).map((s, i) => ({
       user: s.user_name,
       date: s.date,
@@ -166,52 +241,31 @@ function mapRecommendation(apiRec) {
 }
 
 /**
- * 非餐饮类关键词 — 用于前端过滤明显不相关的商家（如理发店、修车行等）。
- * 后端 embedding 模型仅支持英文 + similarity_threshold 过低，
- * 导致不相关结果通过。前端做最后一道防线。
+ * 过滤推荐结果：去重 + 菜系匹配过滤。
+ * 当用户明确提到菜系时，只保留匹配的结果，不展示用户未提及的种类。
  */
-const NON_FOOD_WORDS = /\b(barber|hair\s*cut|hair\s*styl|salon|spa|nail\s|massage|gym|fitness|yoga|auto\s|car\s|gas\s|laundry|dry\s*clean|dentist|doctor|hospital|pharmacy|vet\s|pet\s|bank|atm|insurance|real\s*estate|lawyer|plumber|electric|storage|moving|shipping|hardware|jewelry|watch|clothing|shoe|tailor|tobacco|vape|cannabis|liquor|cleaner|carpet|glass|roofing|pest\s)\b/i
-
-function isFoodBusiness(rec) {
-  const cats = (rec.categories || '').toLowerCase()
-  // 命中了非餐饮关键词 → 过滤掉
-  return !NON_FOOD_WORDS.test(cats)
-}
-
-/**
- * 过滤推荐结果：去重 + 分数断崖 + 非餐饮排除。
- */
-function filterRecommendations(recs) {
+function filterRecommendations(recs, query) {
   if (!recs || !recs.length) return []
 
-  // 0. 按 business_id 去重（保留分数最高的那条）
+  const cuisineMatcher = extractCuisineMatcher(query)
+
   const seen = new Set()
   const deduped = []
   for (const r of recs) {
     const id = r.id || r.business_id
     if (!id || seen.has(id)) continue
+    // 菜系过滤：用户提到了菜系但此结果不匹配 → 跳过
+    if (cuisineMatcher) {
+      const catStr = typeof r.categories === 'string'
+        ? r.categories
+        : (r.categories || []).join(' ')
+      if (!cuisineMatcher(catStr)) continue
+    }
     seen.add(id)
     deduped.push(r)
   }
 
-  // 按分数降序
-  const sorted = [...deduped].sort((a, b) => (b.score || 0) - (a.score || 0))
-
-  // 1. 检测分数断崖 — 相邻落差 > 30% 则截断
-  const cutoff = []
-  for (let i = 0; i < sorted.length; i++) {
-    if (i === 0) {
-      cutoff.push(sorted[i])
-      continue
-    }
-    const prevScore = sorted[i - 1].score || 0
-    const curScore = sorted[i].score || 0
-    if (prevScore > 0 && curScore / prevScore < 0.7) break
-    cutoff.push(sorted[i])
-  }
-
-  // 2. 排除非餐饮类
-  return cutoff.filter(isFoodBusiness)
+  return deduped.sort((a, b) => (b.score || 0) - (a.score || 0))
 }
 
 /** dev mock 回退数据 */
@@ -229,15 +283,25 @@ const MOCK_RECS = [
 
 export default {
   name: 'HomePage',
-  components: { ChatInput, ChatBubble, RecommendationCard },
+  components: { ChatInput, ChatBubble, RecommendationCard, TypingIndicator, AIReplyContent, ChatHistoryPanel },
   setup() {
     /* ─── 响应式状态 ─── */
     const messages = ref([])
     const isThinking = ref(false)
-    const { translate, isTranslating } = useTranslate()
-    const conversationId = ref(tryLoadConversation())
+    const router = useRouter()
+    const { translate } = useTranslate()
+    const {
+      loadConversations, loadConversation, saveConversation,
+      deleteConversation, getCurrentId, setCurrentId, generateId,
+    } = useChatHistory()
+
+    // 对话 ID：优先恢复上次活跃会话
+    const conversationId = ref(getCurrentId() || generateId())
+
     const selectedSource = ref(null)
     const isDesktop = ref(false)
+    const showHistory = ref(false)
+    const historyConversations = ref([])
     const quickQueries = ref([
       '附近有什么好吃的川菜？',
       '适合约会的安静餐厅推荐',
@@ -247,13 +311,71 @@ export default {
     ])
 
     /* ─── 计算属性 ─── */
-    const latestRecs = computed(() => {
-      for (let i = messages.value.length - 1; i >= 0; i--) {
+    /** 按对话轮次分组推荐结果，每组关联到用户的原始提问 */
+    const recRounds = computed(() => {
+      const rounds = []
+      for (let i = 0; i < messages.value.length; i++) {
         const m = messages.value[i]
-        if (m.role === 'ai' && m.recs && m.recs.length) return m.recs
+        if (m.role === 'ai' && m.recs && m.recs.length) {
+          // 找到本轮对话中该 AI 消息之前的最近一条用户消息
+          let query = ''
+          for (let j = i - 1; j >= 0; j--) {
+            if (messages.value[j].role === 'user') {
+              query = messages.value[j].text || ''
+              break
+            }
+          }
+          rounds.push({
+            query,
+            recs: m.recs,
+          })
+        }
       }
-      return []
+      return rounds
     })
+
+    /** 累积所有轮次的推荐结果（去重），桌面端侧边栏使用 */
+    const latestRecs = computed(() => {
+      const seen = new Set()
+      const all = []
+      for (const m of messages.value) {
+        if (m.role === 'ai' && m.recs && m.recs.length) {
+          for (const rec of m.recs) {
+            const id = rec.id || rec.business_id
+            if (id && !seen.has(id)) {
+              seen.add(id)
+              all.push(rec)
+            }
+          }
+        }
+      }
+      return all
+    })
+
+    /* 在消息列表末尾插入 thinking 占位（纯视图层，不污染 messages） */
+    const displayMessages = computed(() => {
+      const result = [...messages.value]
+      if (isThinking.value) {
+        result.push({ role: 'ai', thinking: true, time: timeStr() })
+      }
+      return result
+    })
+
+    /* 消息分组：判断某条消息是否是同角色的第一条 / 最后一条 */
+    function isFirstInGroup(index, role) {
+      if (index === 0) return true
+      const prev = displayMessages.value[index - 1]
+      if (!prev) return true
+      if (prev.thinking) return true
+      return prev.role !== role
+    }
+    function isLastInGroup(index, role) {
+      if (index >= displayMessages.value.length - 1) return true
+      const next = displayMessages.value[index + 1]
+      if (!next) return true
+      if (next.thinking) return false // thinking 后续是真正的 AI 消息
+      return next.role !== role
+    }
 
     /* ─── 工具函数 ─── */
     function timeStr() {
@@ -265,11 +387,56 @@ export default {
         if (end) end.lastElementChild?.scrollIntoView({ behavior: 'smooth' })
       })
     }
-    function tryLoadConversation() {
-      try { return sessionStorage.getItem('dp_ai_conversation_id') || null } catch { return null }
+    /* ── 启动时恢复上次活跃对话 ── */
+    async function restoreLastConversation() {
+      const restored = await loadConversation(conversationId.value)
+      if (restored && restored.messages && restored.messages.length) {
+        messages.value = restored.messages
+        nextTick(() => scrollDown())
+      }
     }
-    function saveConversation(id) {
-      try { sessionStorage.setItem('dp_ai_conversation_id', id) } catch {}
+
+    /* ── 历史面板操作 ── */
+    function openHistory() {
+      historyConversations.value = loadConversations()
+      showHistory.value = true
+    }
+    function closeHistory() {
+      showHistory.value = false
+    }
+    async function loadHistoryConversation(id) {
+      const conv = await loadConversation(id)
+      if (conv && conv.messages) {
+        messages.value = conv.messages
+        conversationId.value = id
+        setCurrentId(id)
+        showHistory.value = false
+        nextTick(() => scrollDown())
+      }
+    }
+    function startNewChat() {
+      const newId = generateId()
+      messages.value = []
+      conversationId.value = newId
+      setCurrentId(newId)
+      showHistory.value = false
+    }
+    async function handleDeleteConversation(id) {
+      await deleteConversation(id)
+      if (conversationId.value === id) {
+        messages.value = []
+        const newId = generateId()
+        conversationId.value = newId
+        setCurrentId(newId)
+      }
+      // 刷新面板列表
+      historyConversations.value = loadConversations()
+    }
+
+    /* ── 持久化辅助 ── */
+    function persistChat() {
+      saveConversation(conversationId.value, messages.value)
+      setCurrentId(conversationId.value)
     }
 
     /* ─── 发送消息（翻译 → RAG → LLM） ─── */
@@ -285,26 +452,35 @@ export default {
       isThinking.value = true
 
       try {
-        // 翻译中文 → 英文（解决 embedding 仅支持英文的问题）
-        const enQuery = await translate(rawText)
+        // 检测非中国地区 → 按需翻译为英文关键词
+        const needTranslate = hasNonChinaLocation(rawText)
+        const query = needTranslate ? await translate(rawText) : rawText
+        const city = extractCity(rawText)
 
-        // 发送英文查询到 RAG 链路
-        const data = await postChatSend(enQuery, conversationId.value)
+        const data = await postChatSend(query, conversationId.value, city)
 
         if (data.conversation_id) {
           conversationId.value = data.conversation_id
-          saveConversation(data.conversation_id)
         }
 
-        const wasTranslated = enQuery !== rawText
+        // 并行拉取推荐商家的图片（中文数据有 image_url，Yelp 没有）
+        const rawRecs = data.recommendations || []
+        if (rawRecs.length) {
+          const details = await Promise.allSettled(
+            rawRecs.map(r => getBusinessDetail(r.business_id))
+          )
+          details.forEach((d, i) => {
+            if (d.status === 'fulfilled' && d.value?.photos) {
+              rawRecs[i] = { ...rawRecs[i], ...d.value }
+            }
+          })
+        }
 
         messages.value.push({
           role: 'ai',
-          intro: data.is_fallback ? '' : data.text,
-          recs: filterRecommendations((data.recommendations || []).map(mapRecommendation)),
-          fallback: data.is_fallback ? data.text : '',
-          translated: wasTranslated,
-          enQuery: wasTranslated ? enQuery : undefined,
+          intro: data.text,
+          recs: filterRecommendations(rawRecs.map(mapRecommendation), rawText),
+          fallback: data.is_fallback,
           time: timeStr(),
         })
       } catch (err) {
@@ -315,24 +491,33 @@ export default {
             role: 'ai',
             intro: '（开发模式）为你找到以下推荐 👇',
             recs: MOCK_RECS,
-            fallback: '',
+            fallback: false,
             time: timeStr(),
           })
         } else {
           messages.value.push({
-            role: 'ai', intro: '', recs: [],
-            fallback: err.message || '抱歉，发生了未知错误',
+            role: 'ai',
+            intro: err.message || '抱歉，发生了未知错误，请稍后再试',
+            recs: [],
+            fallback: true,
             time: timeStr(),
           })
         }
       } finally {
         isThinking.value = false
+        persistChat()
         scrollDown()
       }
     }
 
     /* ─── 其他操作 ─── */
-    function clearChat() { messages.value = [] }
+    function clearChat() {
+      messages.value = []
+      const newId = generateId()
+      conversationId.value = newId
+      setCurrentId(newId)
+      saveConversation(newId, [])
+    }
     function showSource(s) { selectedSource.value = s }
     function goToShop(rec) {
       // 将推荐数据存入共享 store，供详情页/商家后台使用
@@ -350,13 +535,14 @@ export default {
           state: rec.state || '',
           sources: rec.sources || [],
           imgBg: rec.imgBg || '',
+          photos: rec.photos || [],
           reason: rec.reason || '',
           price: rec.price || '--',
         })
       }
       const detailId = rec?.id || rec?.business_id || rec
       if (detailId && typeof detailId === 'string') {
-        this.$router.push(`/detail/${encodeURIComponent(detailId)}`)
+        router.push(`/detail/${encodeURIComponent(detailId)}`)
       }
     }
 
@@ -380,13 +566,16 @@ export default {
 
     /* ─── 响应式断点 ─── */
     function onResize() { isDesktop.value = window.innerWidth >= 1024 }
-    onMounted(() => { onResize(); window.addEventListener('resize', onResize) })
+    onMounted(() => { onResize(); restoreLastConversation(); window.addEventListener('resize', onResize) })
     onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
     return {
-      messages, isThinking, isTranslating, conversationId,
-      selectedSource, isDesktop, quickQueries, latestRecs,
-      sendMessage, clearChat, showSource, goToShop, sourceStarClass, sourceStarChar,
+      messages, displayMessages, isThinking, conversationId,
+      selectedSource, isDesktop, showHistory, historyConversations, quickQueries, latestRecs, recRounds,
+      sendMessage, clearChat, openHistory, closeHistory, loadHistoryConversation,
+      startNewChat, handleDeleteConversation,
+      showSource, goToShop, sourceStarClass, sourceStarChar,
+      isFirstInGroup, isLastInGroup,
     }
   },
 }
@@ -424,6 +613,7 @@ export default {
   line-height: var(--leading-tight);
 }
 .brand-sub { font-size: var(--text-xs); color: var(--ink-muted); }
+.header-actions { display: flex; align-items: center; gap: var(--space-1); }
 .header-action {
   width: 2.5rem;
   height: 2.5rem;
@@ -477,14 +667,65 @@ export default {
   background: var(--coral-pale);
 }
 
-.ai-intro {
-  font-size: var(--text-sm);
-  color: var(--ink-muted);
+/* ── Recommendation Section ── */
+.rec-section {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+.rec-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: var(--space-3);
 }
+.section-label {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--ink);
+}
+.section-badge {
+  font-size: var(--text-xs);
+  background: var(--coral-pale);
+  color: var(--coral);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
 .rec-list { display: flex; flex-direction: column; gap: var(--space-3); }
-.fallback-msg { padding: var(--space-3); background: var(--warm-bg); border-radius: var(--radius-md); }
-.fallback-msg p { font-size: var(--text-sm); color: var(--ink-light); }
+
+/* ── Fallback Chips ── */
+.fallback-chips {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+.fallback-chip-hint {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  margin-bottom: var(--space-2);
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.fallback-chip {
+  padding: var(--space-1) var(--space-3);
+  background: var(--card-warm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--coral);
+  transition: all var(--duration-fast);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fallback-chip:hover {
+  background: var(--coral-pale);
+  border-color: var(--coral);
+}
 
 /* ── Side Panel (Desktop) ── */
 .side-panel {
@@ -514,6 +755,33 @@ export default {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/* ── Round Divider ── */
+.round-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+.round-divider:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.round-query {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.round-query::before {
+  content: '🔍 ';
+  font-weight: 400;
 }
 
 /* ── Modal ── */

@@ -17,102 +17,157 @@
 
     <!-- Content -->
     <template v-else-if="restaurant.name">
-    <!-- Hero -->
-    <div class="detail-hero">
-      <div class="detail-hero-img" :style="{ background: heroBg }"></div>
-      <div class="detail-hero-overlay"></div>
-
-      <div class="hero-actions">
-        <button class="back-btn-white" @click="$router.back()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        </button>
-        <div class="hero-actions-right">
-          <button class="icon-btn-glass" @click="toggleHeart">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="heart-icon" :class="{ 'heart-beat': heartActive }">
-              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-            </svg>
+      <!-- Hero -->
+      <div class="detail-hero">
+        <div class="detail-hero-img" :style="{ background: heroBg }"></div>
+        <div class="detail-hero-overlay"></div>
+        <div class="hero-actions">
+          <button class="back-btn-white" @click="$router.back()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
           </button>
-          <button class="icon-btn-glass">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
-          </button>
-        </div>
-      </div>
-
-      <div class="detail-hero-info">
-        <div class="detail-name">{{ restaurant.name }}</div>
-        <div class="detail-meta-row">
-          <div class="detail-rating-big">
-            <span class="score">{{ restaurant.rating }}</span>
-            <span class="unit">/5</span>
+          <div class="hero-actions-right">
+            <button class="icon-btn-glass" @click="toggleHeart">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="heart-icon" :class="{ 'heart-beat': heartActive }"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            </button>
+            <button class="icon-btn-glass">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
+            </button>
           </div>
-          <span class="meta-sep">·</span>
-          <span>{{ restaurant.reviewCount }} 条评价</span>
-          <span class="meta-sep">·</span>
-          <span class="status-open">营业中</span>
+        </div>
+        <div class="detail-hero-info">
+          <div class="detail-name">{{ restaurant.name }}</div>
         </div>
       </div>
-    </div>
 
-    <!-- Info Pills -->
-    <div class="info-pills stagger-1">
-      <div class="info-pill" v-if="restaurant.cuisine"><span>🍽️</span> {{ restaurant.cuisine }}</div>
-      <div class="info-pill" v-if="restaurant.location"><span>📍</span> {{ restaurant.location }}</div>
-      <div class="info-pill" v-if="restaurant.price"><span>💰</span> {{ restaurant.price }}</div>
-      <div class="info-pill" v-if="restaurant.badge"><span>⭐</span> {{ restaurant.badge }}</div>
-      <div class="info-pill" @click="goToDashboard" style="cursor:pointer;">
-        <span>📊</span> 商家后台
-      </div>
-    </div>
-
-    <!-- Photos -->
-    <div class="detail-section" v-if="photos.length">
-      <div class="detail-section-title">🖼️ 餐厅环境</div>
-      <PhotoStrip :photos="photos" />
-    </div>
-
-    <!-- Recommended Dishes -->
-    <div class="detail-section" v-if="dishes.length">
-      <div class="detail-section-title">👍 招牌推荐菜</div>
-      <DishGrid :dishes="dishes" />
-    </div>
-
-    <!-- Reviews -->
-    <div class="detail-section">
-      <div class="section-header">
-        <div class="detail-section-title" style="margin-bottom:0;">💬 精选评价</div>
-        <a class="section-more" href="#" @click.prevent="goToDashboard">全部 {{ restaurant.reviewCount }} 条 →</a>
-      </div>
-
-      <!-- Review loading -->
-      <div class="review-loading" v-if="reviewsLoading">
-        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
-      </div>
-
-      <!-- Review list -->
-      <template v-else>
-        <div class="review-empty" v-if="reviews.length === 0 && !reviewsLoading">
-          <p>暂无评价数据</p>
+      <!-- Rating & Quick Info Card -->
+      <div class="rating-card">
+        <div class="rating-main">
+          <span class="rating-big">{{ restaurant.rating }}</span>
+          <div class="rating-right">
+            <div class="rating-stars">
+              <span v-for="i in 5" :key="i" class="rstar" :class="i <= starFloor ? 'full' : (i === starHalf ? 'half' : 'empty')">★</span>
+            </div>
+            <span class="rating-sub">{{ restaurant.reviewCount }} 条评价</span>
+          </div>
         </div>
-        <ReviewCard
-          v-for="r in reviews"
-          :key="r.user + r.date"
-          v-bind="r"
-        />
-      </template>
-    </div>
+        <div class="rating-bar-wrap">
+          <div class="rating-bar-fill" :style="{ width: ratingPct + '%' }"></div>
+        </div>
+      </div>
 
-    <!-- Bottom Action Bar -->
-    <div class="detail-actions">
-      <button class="btn-icon" @click="toggleHeart">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-heart" :class="{ filled: heartActive }">
-          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-        </svg>
-      </button>
-      <button class="btn-icon" @click="goToDashboard">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-      </button>
-      <button class="btn-primary" @click="goToDashboard">查看口碑分析</button>
-    </div>
+      <!-- Address & Info -->
+      <div class="info-section">
+        <div class="info-row" v-if="restaurant.location">
+          <span class="info-icon">📍</span>
+          <div class="info-content">
+            <span class="info-label">地址</span>
+            <span class="info-value">{{ restaurant.location }}</span>
+          </div>
+        </div>
+        <div class="info-row" v-if="restaurant.cuisine">
+          <span class="info-icon">🍽️</span>
+          <div class="info-content">
+            <span class="info-label">菜系</span>
+            <span class="info-value">{{ restaurant.cuisine }}</span>
+          </div>
+        </div>
+        <div class="info-row" v-if="restaurant.price && restaurant.price !== '--'">
+          <span class="info-icon">💰</span>
+          <div class="info-content">
+            <span class="info-label">人均</span>
+            <span class="info-value">{{ restaurant.price }}</span>
+          </div>
+        </div>
+        <div class="info-row" v-if="restaurant.badge">
+          <span class="info-icon">🏷️</span>
+          <div class="info-content">
+            <span class="info-label">特色</span>
+            <span class="info-value">{{ restaurant.badge }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Photos -->
+      <div class="detail-section" v-if="photos.length">
+        <div class="detail-section-title">📷 餐厅环境</div>
+        <PhotoStrip :photos="photos" />
+      </div>
+
+      <!-- Dishes -->
+      <div class="detail-section" v-if="dishes.length">
+        <div class="detail-section-title">🍳 招牌菜品</div>
+        <DishGrid :dishes="dishes" />
+      </div>
+
+      <!-- Reviews -->
+      <div class="detail-section">
+        <div class="detail-section-title">
+          顾客评价
+          <span class="title-count" v-if="restaurant.reviewCount">{{ restaurant.reviewCount }} 条</span>
+          <button class="btn-write-review" @click="openWriteReview">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            写评价
+          </button>
+        </div>
+
+        <div class="review-loading" v-if="reviewsLoading">
+          <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+        </div>
+
+        <template v-else>
+          <div class="review-empty" v-if="reviews.length === 0">
+            <p>暂无评价数据</p>
+          </div>
+          <div class="review-list" v-else>
+            <div
+              v-for="(r, i) in reviews"
+              :key="i"
+              class="review-card-detail"
+              :class="{ 'is-user-review': r.source === 'user_review' }"
+            >
+              <div class="rv-avatar">{{ r.avatar || (r.user || '?')[0] }}</div>
+              <div class="rv-body">
+                <div class="rv-header">
+                  <div class="rv-user-row">
+                    <span class="rv-user">{{ r.user }}</span>
+                    <span class="rv-source-badge" v-if="r.source === 'user_review'">我的评价</span>
+                  </div>
+                  <div class="rv-stars">
+                    <span v-for="s in 5" :key="s" class="rv-star" :class="s <= r.rating ? 'on' : 'off'">★</span>
+                  </div>
+                </div>
+                <p class="rv-text">{{ r.text }}</p>
+                <div class="rv-footer">
+                  <span class="rv-date">{{ r.date }}</span>
+                  <span class="rv-likes" v-if="r.likes">👍 {{ r.likes }}</span>
+                  <template v-if="r.source === 'user_review' && r.review_id">
+                    <button class="rv-action-btn" title="编辑" @click="handleEditReview(r)">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="rv-action-btn" title="删除" @click="handleDeleteReview(r)">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Spacer for bottom bar -->
+      <div class="detail-bottom-spacer"></div>
+
+      <!-- Bottom Action Bar -->
+      <div class="detail-actions">
+        <button class="btn-icon" @click="toggleHeart">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-heart" :class="{ filled: heartActive }"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        </button>
+        <button class="btn-icon" @click="goToDashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        </button>
+        <button class="btn-primary" @click="goToDashboard">查看口碑分析</button>
+      </div>
     </template>
 
     <!-- No data -->
@@ -147,17 +202,27 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- Review Form Modal -->
+    <ReviewForm
+      :businessId="route.params.id || ''"
+      :visible="showReviewForm"
+      :initialReview="editingReview"
+      @close="closeReviewForm"
+      @saved="handleReviewSaved"
+      @deleted="handleReviewDeleted"
+    />
   </div>
 </template>
 
 <script>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PhotoStrip from '../components/PhotoStrip.vue'
 import DishGrid from '../components/DishGrid.vue'
-import ReviewCard from '../components/ReviewCard.vue'
+import ReviewForm from '../components/ReviewForm.vue'
 import { getBusinessDetail } from '../api/modules/business.js'
-import { getBusinessReviews } from '../api/modules/reviews.js'
+import { getBusinessReviews, deleteReview } from '../api/modules/reviews.js'
 import { sharedStore } from '../stores/sharedData.js'
 
 const IMG_GRADIENTS = [
@@ -178,7 +243,7 @@ function hashGradient(str) {
 
 export default {
   name: 'RestaurantDetail',
-  components: { PhotoStrip, DishGrid, ReviewCard },
+  components: { PhotoStrip, DishGrid, ReviewForm },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -197,13 +262,22 @@ export default {
     const reviews = ref([])
     const reviewsLoading = ref(false)
     const selectedSource = ref(null)
+    const showReviewForm = ref(false)
+    const editingReview = ref(null)
 
-    /** 从 sharedStore 加载数据（来自首页推荐卡片点击） */
+    const starFloor = computed(() => Math.floor(restaurant.value.rating || 0))
+    const starHalf = computed(() => (restaurant.value.rating || 0) % 1 >= 0.5 ? starFloor.value + 1 : 0)
+    const ratingPct = computed(() => Math.round(((restaurant.value.rating || 0) / 5) * 100))
+
     function loadFromStore() {
       const biz = sharedStore.currentBusiness
       if (!biz || !biz.name) return false
 
-      heroBg.value = biz.imgBg || hashGradient(biz.business_id || biz.name || '')
+      const storePhotos = Array.isArray(biz.photos) ? biz.photos : []
+      const firstPhoto = storePhotos[0] || null
+      heroBg.value = firstPhoto
+        ? `url(${firstPhoto}) center/cover no-repeat`
+        : (biz.imgBg || hashGradient(biz.business_id || biz.name || ''))
 
       restaurant.value = {
         name: biz.name,
@@ -219,35 +293,40 @@ export default {
           : '',
       }
 
-      photos.value = (biz.photos || []).map(url => ({ bg: `url(${url})`, w: '160px', h: '110px' }))
-
-      // Sources from recommendation → review cards
+      photos.value = storePhotos.map(url => ({ bg: `url(${url})`, w: '160px', h: '110px' }))
+      dishes.value = (biz.dishes || []).slice(0, 8)
       reviews.value = (biz.sources || []).map(r => ({
-        avatar: (r.user_name || '?')[0],
-        user: r.user_name || '匿名用户',
-        rating: r.rating || 0,
+        avatar: (r.user_name || r.user || '?')[0],
+        user: r.user_name || r.user || '匿名用户',
+        rating: r.rating || r.stars || 0,
         text: r.text || r.snippet || '',
         date: r.date || '',
         likes: r.useful || 0,
         replies: 0, photoCount: 0, photoBg: [],
+        source: r.source || 'yelp',
+        review_id: r.review_id || null,
       }))
 
       return true
     }
 
-    /** 从后端 API 加载（B.2 + C.2） */
     async function loadFromApi(businessId) {
       try {
         const biz = await getBusinessDetail(businessId)
         if (!biz || !biz.name) return false
 
-        heroBg.value = hashGradient(biz.business_id || biz.name || '')
+        const apiPhotos = Array.isArray(biz.photos) ? biz.photos : []
+        const firstPhoto = apiPhotos[0] || null
+        heroBg.value = firstPhoto
+          ? `url(${firstPhoto}) center/cover no-repeat`
+          : hashGradient(biz.business_id || biz.name || '')
+
         restaurant.value = {
           name: biz.name,
           rating: Math.round((biz.rating || 0) * 10) / 10,
           reviewCount: biz.review_count || 0,
           cuisine: (biz.categories || []).join(' · '),
-          location: [biz.city, biz.state].filter(Boolean).join(' · '),
+          location: [biz.city, biz.state, biz.address].filter(Boolean).join(' · '),
           price: biz.attributes?.RestaurantsPriceRange2
             ? '$'.repeat(Number(biz.attributes.RestaurantsPriceRange2)) + ' · /人'
             : '--',
@@ -255,22 +334,24 @@ export default {
             ? Object.keys(biz.attributes).filter(k => !k.startsWith('Restaurants'))[0] || ''
             : '',
         }
-        photos.value = (biz.photos || []).map(url => ({ bg: `url(${url})`, w: '160px', h: '110px' }))
 
-        // Load reviews
+        photos.value = apiPhotos.map(url => ({ bg: `url(${url})`, w: '160px', h: '110px' }))
+        dishes.value = (biz.dishes || []).slice(0, 8)
+
         reviewsLoading.value = true
         try {
-          const revData = await getBusinessReviews(businessId, { pageSize: 5, sortBy: 'date' })
+          const revData = await getBusinessReviews(businessId, { pageSize: 10, sortBy: 'date' })
           reviews.value = (revData.items || []).map(r => ({
-            avatar: (r.user_name || '?')[0],
-            user: r.user_name || '匿名用户',
+            avatar: (r.user_name || r.user || '?')[0],
+            user: r.user_name || r.user || '匿名用户',
             rating: r.rating || 0,
             text: r.text || '',
             date: r.date || '',
             likes: r.useful || 0,
-            replies: 0, photoCount: 0, photoBg: [],
+            source: r.source || 'yelp',
+            review_id: r.review_id || null,
           }))
-        } catch { /* keep existing reviews */ }
+        } catch { /* keep empty */ }
         finally { reviewsLoading.value = false }
 
         return true
@@ -285,23 +366,22 @@ export default {
 
       const businessId = route.params.id
 
-      // 1. Try sharedStore first (from HomePage recommendation click)
       if (loadFromStore()) {
         loading.value = false
-        // Also try to load more reviews from API
         if (businessId) {
           reviewsLoading.value = true
           try {
             const revData = await getBusinessReviews(businessId, { pageSize: 10, sortBy: 'date' })
             if (revData.items && revData.items.length) {
               reviews.value = revData.items.map(r => ({
-                avatar: (r.user_name || '?')[0],
-                user: r.user_name || '匿名用户',
+                avatar: (r.user_name || r.user || '?')[0],
+                user: r.user_name || r.user || '匿名用户',
                 rating: r.rating || 0,
                 text: r.text || '',
                 date: r.date || '',
                 likes: r.useful || 0,
-                replies: 0, photoCount: 0, photoBg: [],
+                source: r.source || 'yelp',
+                review_id: r.review_id || null,
               }))
             }
           } catch { /* keep store data */ }
@@ -310,13 +390,11 @@ export default {
         return
       }
 
-      // 2. Try API
       if (businessId) {
         const ok = await loadFromApi(businessId)
         if (ok) { loading.value = false; return }
       }
 
-      // 3. No data available
       error.value = businessId
         ? '商家详情接口尚未就绪，请从首页 AI 推荐结果进入'
         : '未指定商家 ID'
@@ -331,6 +409,64 @@ export default {
     function goToDashboard() {
       const id = route.params.id
       if (id) router.push(`/business/${encodeURIComponent(id)}`)
+    }
+
+    /* ─── Review Form Handlers ─── */
+    function openWriteReview() {
+      editingReview.value = null
+      showReviewForm.value = true
+    }
+
+    function handleEditReview(r) {
+      editingReview.value = {
+        review_id: r.review_id,
+        rating: r.rating,
+        text: r.text,
+      }
+      showReviewForm.value = true
+    }
+
+    async function handleDeleteReview(r) {
+      if (!r.review_id) return
+      if (!confirm('确定要删除这条评价吗？此操作不可撤销。')) return
+      try {
+        await deleteReview(r.review_id)
+        reviews.value = reviews.value.filter(rv => rv.review_id !== r.review_id)
+      } catch (err) {
+        alert(err.message || '删除失败，请稍后重试')
+      }
+    }
+
+    function closeReviewForm() {
+      showReviewForm.value = false
+      editingReview.value = null
+    }
+
+    function handleReviewSaved() {
+      // Refresh the review list
+      const bizId = route.params.id
+      if (bizId) {
+        reviewsLoading.value = true
+        getBusinessReviews(bizId, { pageSize: 10, sortBy: 'date' }).then(revData => {
+          reviews.value = (revData.items || []).map(r => ({
+            avatar: (r.user_name || r.user || '?')[0],
+            user: r.user_name || r.user || '匿名用户',
+            rating: r.rating || 0,
+            text: r.text || '',
+            date: r.date || '',
+            likes: r.useful || 0,
+            source: r.source || 'yelp',
+            review_id: r.review_id || null,
+          }))
+        }).catch(() => {}).finally(() => { reviewsLoading.value = false })
+      }
+    }
+
+    function handleReviewDeleted() {
+      if (editingReview.value?.review_id) {
+        reviews.value = reviews.value.filter(r => r.review_id !== editingReview.value.review_id)
+      }
+      editingReview.value = null
     }
 
     function sourceStarClass(i) {
@@ -351,25 +487,34 @@ export default {
     return {
       heartActive, loading, error,
       restaurant, photos, dishes, reviews, reviewsLoading,
-      heroBg, selectedSource,
+      heroBg, selectedSource, starFloor, starHalf, ratingPct,
       toggleHeart, goToDashboard, loadData,
       sourceStarClass, sourceStarChar,
+      showReviewForm, editingReview,
+      openWriteReview, handleEditReview, handleDeleteReview,
+      closeReviewForm, handleReviewSaved, handleReviewDeleted,
+      route,
     }
   },
 }
 </script>
 
 <style scoped>
+/* ── Hero ── */
 .detail-hero {
-  position: relative; width: 100%; height: 260px; overflow: hidden;
+  position: relative; width: 100%; height: 240px; overflow: hidden;
   background: linear-gradient(135deg, #1A1A2E, #3D2E3A);
 }
-.detail-hero-img { width: 100%; height: 100%; opacity: 0.85; }
+.detail-hero-img {
+  width: 100%; height: 100%; opacity: 0.9;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
 .detail-hero-overlay {
   position: absolute; inset: 0;
-  background: linear-gradient(to top, rgba(26,26,46,0.9) 0%, rgba(26,26,46,0.05) 55%, transparent 100%);
+  background: linear-gradient(to top, rgba(26,26,46,0.92) 0%, rgba(26,26,46,0.1) 50%, transparent 100%);
 }
-
 .hero-actions {
   position: absolute; top: 0; left: 0; right: 0;
   padding: var(--space-3) var(--space-4);
@@ -377,14 +522,12 @@ export default {
   z-index: 10;
 }
 .hero-actions-right { display: flex; gap: var(--space-2); }
-
 .back-btn-white {
   color: #fff; display: flex; align-items: center; gap: var(--space-1);
   font-size: var(--text-sm); transition: opacity var(--duration-fast);
 }
 .back-btn-white:hover { opacity: 0.7; }
 .back-btn-white svg { width: 18px; height: 18px; }
-
 .icon-btn-glass {
   width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -393,54 +536,192 @@ export default {
   color: #fff;
 }
 .icon-btn-glass svg { width: 18px; height: 18px; }
-
 .detail-hero-info {
   position: absolute; bottom: 0; left: 0; right: 0;
-  padding: var(--space-6); color: #fff;
+  padding: var(--space-6);
 }
-.detail-name { font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 700; margin-bottom: var(--space-2); }
-.detail-meta-row { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
-.meta-sep { color: rgba(255,255,255,0.5); }
-.detail-rating-big { display: flex; align-items: baseline; gap: 2px; font-weight: 700; }
-.detail-rating-big .score { font-size: var(--text-xl); color: var(--amber); }
-.detail-rating-big .unit { font-size: var(--text-xs); color: rgba(255,255,255,0.7); }
-.status-open { color: var(--emerald); font-weight: 600; }
+.detail-name {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl); font-weight: 700;
+  color: #fff; line-height: 1.2;
+}
 
-.info-pills {
-  display: flex; gap: var(--space-2);
-  padding: var(--space-4); flex-wrap: wrap;
+/* ── Rating Card ── */
+.rating-card {
+  margin: -16px var(--space-4) 0;
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-md);
+  position: relative;
+  z-index: 2;
 }
-.info-pill {
-  display: flex; align-items: center; gap: var(--space-1);
-  font-size: var(--text-xs); color: var(--ink-light);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
-  background: #F5F3F0;
-  transition: background var(--duration-fast);
+.rating-main {
+  display: flex; align-items: center; gap: var(--space-4);
+  margin-bottom: var(--space-3);
 }
-.info-pill:hover { background: var(--coral-pale); }
+.rating-big {
+  font-family: var(--font-display);
+  font-size: 3rem; font-weight: 700;
+  color: var(--amber); line-height: 1;
+}
+.rating-right { flex: 1; }
+.rating-stars {
+  display: flex; gap: 2px; margin-bottom: 4px;
+}
+.rstar { font-size: 1rem; }
+.rstar.full { color: var(--amber); }
+.rstar.half { color: var(--amber); opacity: 0.5; }
+.rstar.empty { color: #DDD; }
+.rating-sub {
+  font-size: var(--text-xs); color: var(--ink-muted);
+}
+.rating-bar-wrap {
+  height: 4px; background: #F0EBE5;
+  border-radius: 2px; overflow: hidden;
+}
+.rating-bar-fill {
+  height: 100%; background: linear-gradient(90deg, var(--amber), var(--coral));
+  border-radius: 2px; transition: width 0.6s var(--ease-out);
+}
 
+/* ── Info Section ── */
+.info-section {
+  padding: var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.info-row {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.info-icon { font-size: 1.125rem; flex-shrink: 0; margin-top: 1px; }
+.info-content {
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0;
+}
+.info-label {
+  font-size: var(--text-xs); color: var(--ink-muted);
+  font-weight: 500;
+}
+.info-value {
+  font-size: var(--text-sm); color: var(--ink);
+  line-height: var(--leading-relaxed);
+  word-break: break-all;
+}
+
+/* ── Sections ── */
 .detail-section {
-  padding: var(--space-3) var(--space-4) var(--space-5);
+  padding: var(--space-4) var(--space-4) var(--space-5);
+  border-bottom: 6px solid var(--warm-bg);
+}
+.detail-section:last-child { border-bottom: none; }
+.detail-section-title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg); font-weight: 700;
+  color: var(--ink); margin-bottom: var(--space-3);
+  display: flex; align-items: baseline; gap: var(--space-2);
+}
+.title-count {
+  font-family: var(--font-body);
+  font-size: var(--text-xs); color: var(--ink-muted);
+  font-weight: 400;
+}
+
+/* ── Reviews ── */
+.btn-write-review {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-1) var(--space-3);
+  background: var(--coral);
+  color: #fff;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  transition: background var(--duration-fast);
+  flex-shrink: 0;
+}
+.btn-write-review:hover { background: var(--coral-deep); }
+.btn-write-review svg { flex-shrink: 0; }
+
+.review-list {
+  display: flex; flex-direction: column;
+}
+.review-card-detail {
+  display: flex; gap: var(--space-3);
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
 }
-.detail-section-title {
-  font-family: var(--font-display); font-size: var(--text-lg);
-  font-weight: 700; margin-bottom: var(--space-3); color: var(--ink);
+.review-card-detail:last-child { border-bottom: none; }
+.review-card-detail.is-user-review {
+  background: var(--coral-pale);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: 0 calc(-1 * var(--space-1));
+  border-bottom: none;
 }
-
-.section-header {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  margin-bottom: 0;
+.rv-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--coral-pale), #FFE0D0);
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-sm); font-weight: 700; color: var(--coral-deep);
 }
-.section-more { font-size: var(--text-xs); color: var(--ink-muted); }
-.section-more:hover { color: var(--coral); }
+.rv-body { flex: 1; min-width: 0; }
+.rv-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px;
+}
+.rv-user {
+  font-size: var(--text-sm); font-weight: 600; color: var(--ink);
+}
+.rv-user-row {
+  display: flex; align-items: center; gap: var(--space-2);
+}
+.rv-source-badge {
+  font-size: 0.625rem;
+  padding: 1px 6px;
+  background: var(--coral);
+  color: #fff;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+.rv-stars {
+  display: flex; gap: 1px; font-size: 0.625rem;
+}
+.rv-star.on { color: var(--amber); }
+.rv-star.off { color: #DDD; }
+.rv-text {
+  font-size: var(--text-sm); color: var(--ink-light);
+  line-height: var(--leading-relaxed); margin-bottom: var(--space-1);
+}
+.rv-footer {
+  display: flex; align-items: center; gap: var(--space-4);
+  font-size: var(--text-xs); color: var(--ink-muted);
+}
+.rv-likes { color: var(--coral); }
+.rv-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--ink-muted);
+  transition: all var(--duration-fast);
+  margin-left: 2px;
+}
+.rv-action-btn:hover {
+  background: var(--coral-pale);
+  color: var(--coral);
+}
 
 .review-loading {
   display: flex; align-items: center; gap: var(--space-1);
-  padding: var(--space-4); justify-content: center;
+  padding: var(--space-6); justify-content: center;
 }
-.review-empty { text-align: center; padding: var(--space-4); color: var(--ink-muted); font-size: var(--text-sm); }
+.review-empty { text-align: center; padding: var(--space-6); color: var(--ink-muted); font-size: var(--text-sm); }
 
 .typing-dot {
   width: 6px; height: 6px; background: var(--ink-muted);
@@ -454,6 +735,8 @@ export default {
   40% { transform: scale(1); opacity: 1; }
 }
 
+/* ── Bottom Bar ── */
+.detail-bottom-spacer { height: 80px; }
 .detail-actions {
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
   width: 100%; max-width: var(--max-width);
@@ -474,7 +757,6 @@ export default {
 .btn-icon:hover { background: var(--card-warm); }
 .btn-icon svg { width: 20px; height: 20px; }
 .action-heart.filled { color: var(--coral); }
-
 .btn-primary {
   flex: 1; background: var(--coral); color: #fff;
   border-radius: var(--radius-full); font-size: var(--text-md);
@@ -483,7 +765,6 @@ export default {
 }
 .btn-primary:hover { background: var(--coral-deep); }
 .btn-primary:active { transform: scale(0.97); }
-
 .heart-icon { width: 18px; height: 18px; }
 
 /* ── Loading & Error ── */
@@ -496,7 +777,6 @@ export default {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-
 .detail-error { text-align: center; padding: var(--space-16) var(--space-4); }
 .error-icon { font-size: 3rem; margin-bottom: var(--space-4); }
 .detail-error h3 {

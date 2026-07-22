@@ -2,11 +2,12 @@
  * Base HTTP Client
  * ================
  * Wraps the Fetch API with:
- * - Configurable base URL matching the backend (no version prefix)
+ * - Configurable base URL matching the backend (with /v1 prefix)
  * - Request-level timeout
- * - Unified error handling
+ * - Unified response unwrapping ({ code, message, data } → data)
  *
- * Backend: FastAPI at localhost:8000, plain JSON responses (no code/data wrapper).
+ * Backend: FastAPI at localhost:8000
+ * API docs: ANALYSIS_API_DOCS.md — base path /api/v1
  *
  * Usage (from a module):
  *   import { request } from './client.js'
@@ -14,20 +15,23 @@
  */
 
 /* ─── Configuration ─── */
-const BASE_URL = '/api'
-const DEFAULT_TIMEOUT_MS = 30_000 // RAG calls can take a while
+const BASE_URL = '/api/v1'
+const DEFAULT_TIMEOUT_MS = 30_000 // RAG / AI summary calls can take a while
 
 /**
- * Thin wrapper around `fetch` with timeout.
+ * Thin wrapper around `fetch` with timeout and unified response unwrapping.
  *
- * @param {string}  path     - API path, e.g. '/chat/send'
+ * The backend returns: { code: 0, message: "success", data: {...}, request_id: "uuid" }
+ * This function checks `code === 0`, throws on error, and returns `data`.
+ *
+ * @param {string}  path     - API path, e.g. '/businesses'
  * @param {object}  [opts]
  * @param {string}  [opts.method]  - HTTP method (default 'GET')
  * @param {object}  [opts.params]  - URL query parameters
  * @param {object}  [opts.body]    - JSON request body (only for POST/PUT/PATCH)
  * @param {number}  [opts.timeout] - per-request timeout in ms
- * @returns {Promise<any>} Resolves with the parsed JSON response body
- * @throws  {Error} On network failure, timeout, or non-2xx HTTP status
+ * @returns {Promise<any>} Resolves with the `data` field from the unified response
+ * @throws  {Error} On network failure, timeout, non-zero code, or non-2xx HTTP status
  */
 export async function request(path, opts = {}) {
   const {
@@ -85,16 +89,25 @@ export async function request(path, opts = {}) {
     if (!response.ok) {
       throw new Error(`服务器返回错误 (HTTP ${response.status})`)
     }
-    // Some endpoints (like DELETE) may return no body
+    // Some endpoints may return no body
     return null
   }
 
-  /* Throw on non-2xx */
+  /* Throw on non-2xx HTTP status */
   if (!response.ok) {
     const detail = json.detail || json.message || `HTTP ${response.status}`
     throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
   }
 
+  /* Unwrap unified response: { code, message, data, request_id } */
+  if (json && typeof json.code === 'number') {
+    if (json.code !== 0) {
+      throw new Error(json.message || `业务错误 (code=${json.code})`)
+    }
+    return json.data !== undefined ? json.data : json
+  }
+
+  /* Fallback: plain JSON response (e.g. health check at /api/health) */
   return json
 }
 

@@ -77,6 +77,11 @@
   --bubble-user-bg: var(--coral-pale);
   --bubble-ai-bg:   #FFFBF5;
   --bubble-radius:  1.25rem;
+  --ai-accent-bar:  linear-gradient(180deg, var(--coral), var(--amber));
+  --thinking-text-color: var(--ink-muted);
+  --rank-gold:   #F0A500;
+  --rank-silver: #A0A0B0;
+  --rank-bronze: #CD7F32;
 
   /* ── Motion Tokens ── */
   --ease-out:     cubic-bezier(0.16, 1, 0.3, 1);

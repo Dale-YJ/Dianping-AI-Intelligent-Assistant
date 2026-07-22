@@ -1,9 +1,9 @@
 <template>
-  <div class="chat-msg" :class="role">
+  <div class="chat-msg" :class="[role, { 'msg-grouped': !isFirstInGroup }]">
     <div class="bubble" :class="role">
       <slot />
     </div>
-    <div class="meta" v-if="time">{{ time }}</div>
+    <div class="meta" v-if="time && isLastInGroup">{{ time }}</div>
   </div>
 </template>
 
@@ -12,7 +12,9 @@ export default {
   name: 'ChatBubble',
   props: {
     role: { type: String, default: 'ai', validator: v => ['user', 'ai'].includes(v) },
-    time: { type: String, default: '' }
+    time: { type: String, default: '' },
+    isFirstInGroup: { type: Boolean, default: true },
+    isLastInGroup: { type: Boolean, default: true }
   }
 }
 </script>
@@ -26,6 +28,11 @@ export default {
 }
 .chat-msg.user { align-items: flex-end; }
 .chat-msg.ai   { align-items: flex-start; }
+/* Grouped messages: tighter spacing */
+.chat-msg.msg-grouped { margin-top: calc(var(--space-3) * -1); margin-bottom: var(--space-3); }
+.chat-msg.msg-grouped .bubble.ai {
+  border-top-left-radius: var(--radius-sm);
+}
 
 .bubble {
   max-width: 85%;
@@ -34,6 +41,7 @@ export default {
   font-size: var(--text-base);
   line-height: var(--leading-relaxed);
   word-break: break-word;
+  position: relative;
 }
 .bubble.user {
   background: var(--bubble-user-bg);
@@ -45,6 +53,17 @@ export default {
   color: var(--ink);
   border: 1px solid var(--border);
   border-bottom-left-radius: var(--radius-sm);
+  overflow: hidden;
+}
+/* AI bubble left accent bar */
+.bubble.ai::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--ai-accent-bar);
 }
 .meta {
   margin-top: var(--space-1);
