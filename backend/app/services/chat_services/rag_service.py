@@ -436,9 +436,10 @@ def _search_reviews(business_id: str, top_k: int = 5) -> list[dict]:
     client = get_opensearch_client()
     if not client.indices.exists(index=REVIEW_INDEX):
         return []
+    # business_id 在评价索引中是 text 类型，使用 match 查询
     body = {
         "size": top_k,
-        "query": {"bool": {"must": [{"term": {"business_id": business_id}}]}},
+        "query": {"bool": {"must": [{"match": {"business_id": business_id}}]}},
         "sort": [{"useful": {"order": "desc"}}],
     }
     try:
