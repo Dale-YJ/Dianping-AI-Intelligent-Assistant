@@ -12,6 +12,7 @@
  */
 
 import { get, del, request } from '../client.js'
+import { validateInput } from '../../utils/contentFilter.js'
 
 /* ─── sessionStorage 会话管理 ─── */
 const CLIENT_SESSION_KEY = 'dp_ai_conversation_id'
@@ -199,6 +200,21 @@ export async function postChatSend(message, conversationId, city, businessId) {
   const isBiz = !!businessId
   const convId = conversationId || loadConversationId(isBiz) || genConversationId()
   saveConversationId(convId, isBiz)
+
+  // 违禁词兜底校验
+  const inputCheck = validateInput(message)
+  if (!inputCheck.valid) {
+    const errMsg = inputCheck.reason
+    const history = loadHistory(convId)
+    history.push({ role: 'assistant', content: `[错误] ${errMsg}` })
+    saveHistory(convId, history)
+    return {
+      conversation_id: convId,
+      text: errMsg,
+      recommendations: [],
+      is_fallback: true,
+    }
+  }
 
   // 本地缓存一份用户消息
   const history = loadHistory(convId)

@@ -188,6 +188,7 @@ import { useChatHistory } from '../composables/useChatHistory.js'
 import { useTranslate } from '../composables/useTranslate.js'
 import { hasNonChinaLocation, extractCity } from '../utils/detectRegion.js'
 import { extractCuisineMatcher } from '../utils/detectCuisine.js'
+import { filterOutput } from '../utils/contentFilter.js'
 
 /* ─── 推荐数据映射: API → 组件 props ─── */
 const IMG_GRADIENTS = [
@@ -634,7 +635,7 @@ export default {
 
         messages.value.push({
           role: 'ai',
-          intro: cleanedIntro,
+          intro: filterOutput(cleanedIntro),
           recs: filteredRecs,
           fallback: data.is_fallback,
           time: timeStr(),

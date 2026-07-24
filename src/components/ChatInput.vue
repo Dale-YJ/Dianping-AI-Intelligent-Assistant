@@ -23,11 +23,14 @@
         </svg>
       </button>
     </div>
-    <p class="chat-hint" v-if="showHint">💡 试试：「附近有什么好吃的川菜」「安静的咖啡馆推荐」</p>
+    <p class="chat-hint" v-if="showHint && !warningMsg">💡 试试：「附近有什么好吃的川菜」「安静的咖啡馆推荐」</p>
+    <p class="chat-warning" v-if="warningMsg">{{ warningMsg }}</p>
   </div>
 </template>
 
 <script>
+import { validateInput } from '../utils/contentFilter.js'
+
 export default {
   name: 'ChatInput',
   props: {
@@ -37,13 +40,23 @@ export default {
   },
   emits: ['send'],
   data() {
-    return { text: '', composing: false }
+    return { text: '', composing: false, warningMsg: '' }
   },
   methods: {
     send() {
       const val = this.text.trim()
       if (!val || this.disabled) return
       if (this.composing) return
+
+      // 违禁词审核
+      const result = validateInput(val)
+      if (!result.valid) {
+        this.warningMsg = result.reason
+        setTimeout(() => { this.warningMsg = '' }, 3000)
+        return
+      }
+
+      this.warningMsg = ''
       this.$emit('send', val)
       this.text = ''
     }
@@ -103,5 +116,12 @@ export default {
   font-size: var(--text-xs);
   color: var(--ink-muted);
   text-align: center;
+}
+.chat-warning {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: #DC2626;
+  text-align: center;
+  animation: fadeUp 0.2s ease;
 }
 </style>

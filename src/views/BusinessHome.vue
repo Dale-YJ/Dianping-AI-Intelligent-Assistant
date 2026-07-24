@@ -87,6 +87,7 @@ import RecommendationCard from '../components/RecommendationCard.vue'
 import { postChatSend } from '../api/modules/chat.js'
 import { getBusinessDetail } from '../api/modules/business.js'
 import { sharedStore } from '../stores/sharedData.js'
+import { filterOutput } from '../utils/contentFilter.js'
 
 const IMG_GRADIENTS = [
   'linear-gradient(135deg, #1A3A2A, #2A4A3A)',
@@ -178,7 +179,7 @@ export default {
 
         messages.value.push({
           role: 'ai',
-          intro: data.text,
+          intro: filterOutput(data.text),
           recs: rawRecs.map(mapRecommendation),
           time: timeStr(),
         })
