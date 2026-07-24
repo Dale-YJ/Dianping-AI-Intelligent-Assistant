@@ -67,6 +67,20 @@ function mapBusinessToRec(biz) {
   }
 }
 
+/* ─── 非餐饮类目黑名单正则 ─── */
+const NON_FOOD_CATEGORY_RE = /pet|groomer|veterinar|doctor|hospital|dentist|pharmacy|clinic|gas\s?station|laundry|dry\s?clean|auto\s?repair|storage|shipping|postal|bank|insurance|real\s?estate|lawyer|attorney|plumber|electric|hardware|jewelry|shoe\s?store|tailor|tobacco|vape|cannabis|liquor\s?store|cleaner|carpet|glass|roofing|mover|moving|internet|telecom|isp\b|salon|barber|beauty|nail\s?salon|spa|nonprofit|charity|school|tutor|college|gym|yoga|fitness|church|religious|funeral|cremation|gun|firearm|pawn|payday|loan|taxi|limousine|towing|car\s?wash|oil\s?change|pest\s?control|landscap|gardener|contractor|painter|handyman|locksmith|appliance/i
+
+/**
+ * 判断商家是否为餐饮/食品相关类目。
+ * 使用黑名单过滤明显非餐饮的类目（搬家公司、美发店、诊所等）。
+ */
+function isFoodBusiness(biz) {
+  const cats = Array.isArray(biz.categories) ? biz.categories : []
+  if (cats.length === 0) return true // 无类目信息时不过滤，避免误杀
+  // 只要有一个类目不匹配非餐饮黑名单，就认为是餐饮相关
+  return cats.some(c => !NON_FOOD_CATEGORY_RE.test(c))
+}
+
 /* ─── 根据关键词推断相关 emoji ─── */
 function guessEmoji(keyword) {
   const kw = keyword.toLowerCase()
@@ -186,7 +200,9 @@ export async function postChatSend(message, conversationId, city, businessId) {
       data = json.data !== undefined ? json.data : json
     }
 
-    const recommendations = (data.recommendations || []).map(mapBusinessToRec)
+    const recommendations = (data.recommendations || [])
+      .map(mapBusinessToRec)
+      .filter(isFoodBusiness)
     const isFallback = !data.text || recommendations.length === 0
 
     // 本地缓存 AI 回复
