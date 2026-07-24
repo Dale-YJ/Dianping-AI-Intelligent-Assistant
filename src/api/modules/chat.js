@@ -14,19 +14,20 @@
 import { get, del, request } from '../client.js'
 
 /* ─── sessionStorage 会话管理 ─── */
-const SESSION_KEY = 'dp_ai_conversation_id'
+const CLIENT_SESSION_KEY = 'dp_ai_conversation_id'
+const BIZ_SESSION_KEY = 'dp_ai_conversation_id_biz'
 const HISTORY_PREFIX = 'dp_ai_history_'
 
 function genConversationId() {
   return `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-function loadConversationId() {
-  try { return sessionStorage.getItem(SESSION_KEY) || null } catch { return null }
+function loadConversationId(isBiz = false) {
+  try { return sessionStorage.getItem(isBiz ? BIZ_SESSION_KEY : CLIENT_SESSION_KEY) || null } catch { return null }
 }
 
-function saveConversationId(id) {
-  try { sessionStorage.setItem(SESSION_KEY, id) } catch {}
+function saveConversationId(id, isBiz = false) {
+  try { sessionStorage.setItem(isBiz ? BIZ_SESSION_KEY : CLIENT_SESSION_KEY, id) } catch {}
 }
 
 function loadHistory(convId) {
@@ -147,8 +148,9 @@ function buildResponseText(message, items) {
  * }>}
  */
 export async function postChatSend(message, conversationId, city, businessId) {
-  const convId = conversationId || loadConversationId() || genConversationId()
-  saveConversationId(convId)
+  const isBiz = !!businessId
+  const convId = conversationId || loadConversationId(isBiz) || genConversationId()
+  saveConversationId(convId, isBiz)
 
   // 本地缓存一份用户消息
   const history = loadHistory(convId)

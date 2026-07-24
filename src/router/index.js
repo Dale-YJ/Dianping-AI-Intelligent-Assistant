@@ -22,4 +22,22 @@ const router = createRouter({
   routes
 })
 
+/**
+ * 路由守卫：切换商家端 ↔ 客户端时清除 sessionStorage 会话 ID，
+ * 防止后端对话上下文跨身份泄露。
+ */
+router.beforeEach((to, from) => {
+  if (!from.path) return // 首次进入，跳过
+
+  const wasBiz = from.path.startsWith('/business') || from.path.startsWith('/select-shop')
+  const isBiz = to.path.startsWith('/business') || to.path.startsWith('/select-shop')
+
+  if (wasBiz !== isBiz) {
+    try {
+      sessionStorage.removeItem('dp_ai_conversation_id')
+      sessionStorage.removeItem('dp_ai_conversation_id_biz')
+    } catch {}
+  }
+})
+
 export default router
