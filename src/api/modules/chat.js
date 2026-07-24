@@ -81,6 +81,40 @@ function isFoodBusiness(biz) {
   return cats.some(c => !NON_FOOD_CATEGORY_RE.test(c))
 }
 
+/**
+ * 清洗后端 LLM 在检索结果全部被前端过滤后产生的冗余噪声文本。
+ * 去除"哭笑不得"、"八竿子打不着"等自嘲话术和重复搜索建议，
+ * 替换为简洁的无结果提示。
+ */
+const NOISE_PATTERNS = [
+  /哭笑不得/,
+  /八竿子打不着/,
+  /没法给你推荐/,
+  /不能编造/,
+  /翻遍了.*数据/,
+  /搬家服务|网络公司|美发店|非营利机构/,
+]
+const NOISE_SEPARATOR = /\n*---+\n*/
+
+function cleanNoiseText(text) {
+  if (!text) return text
+
+  // 检测是否为噪声回复
+  const isNoise = NOISE_PATTERNS.some(p => p.test(text))
+  if (!isNoise) return text
+
+  // 截掉 "---" 分隔符之后的内容（通常是搜索建议、引导话术）
+  const parts = text.split(NOISE_SEPARATOR)
+  const mainPart = parts[0]?.trim() || ''
+
+  // 如果主体部分很短或是纯抱怨，整体替换
+  if (mainPart.length < 60 || /没法|不能|哭笑不得/.test(mainPart)) {
+    return '😅 抱歉，当前数据库中没有找到与您需求匹配的餐饮商家，请尝试更换关键词或调整筛选条件。'
+  }
+
+  return mainPart
+}
+
 /* ─── 根据关键词推断相关 emoji ─── */
 function guessEmoji(keyword) {
   const kw = keyword.toLowerCase()
@@ -200,18 +234,27 @@ export async function postChatSend(message, conversationId, city, businessId) {
       data = json.data !== undefined ? json.data : json
     }
 
-    const recommendations = (data.recommendations || [])
+    const rawRecs = data.recommendations || []
+    const recommendations = rawRecs
       .map(mapBusinessToRec)
       .filter(isFoodBusiness)
-    const isFallback = !data.text || recommendations.length === 0
+
+    // 如果后端返回了结果但全部被前端过滤掉（非餐饮类目），
+    // 清洗 AI 回复中的冗余噪声文本，避免展示大段无用的抱怨和建议
+    let responseText = data.text || ''
+    if (rawRecs.length > 0 && recommendations.length === 0 && responseText) {
+      responseText = cleanNoiseText(responseText)
+    }
+
+    const isFallback = !responseText || recommendations.length === 0
 
     // 本地缓存 AI 回复
-    history.push({ role: 'assistant', content: data.text || '' })
+    history.push({ role: 'assistant', content: responseText })
     saveHistory(convId, history)
 
     return {
       conversation_id: data.conversation_id || convId,
-      text: data.text || '',
+      text: responseText,
       recommendations,
       is_fallback: isFallback,
     }
