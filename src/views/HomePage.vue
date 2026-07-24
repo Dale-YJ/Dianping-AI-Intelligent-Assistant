@@ -473,6 +473,53 @@ export default {
       return -1
     }
 
+    /* ─── 用户画像类查询检测 ─── */
+    const PORTRAIT_KEYWORDS = ['用户画像', '画像', '偏好总结', '我的偏好', '我的档案', 'profile', '个人画像']
+    function isPortraitQuery(text) {
+      return PORTRAIT_KEYWORDS.some(kw => text.includes(kw))
+    }
+
+    /* ─── 清洗 AI 回复中的冗余噪声 ─── */
+    const AI_NOISE_SEPARATOR = /\n*---+\n*/
+    const AI_NOISE_PATTERNS = [
+      /哭笑不得/,
+      /八竿子打不着/,
+      /没法.*推荐/,
+      /不能编造/,
+      /翻遍了.*数据/,
+      /全是.*(?:国外|美国|摄影|美发|汽车|维修|搬家|网络)/,
+      /连一家.*都没有/,
+      /使不上劲/,
+      /使不上劲儿/,
+      /数据不给力/,
+      /抱歉抱歉/,
+    ]
+
+    function cleanAiIntro(text) {
+      if (!text) return text
+      const isNoise = AI_NOISE_PATTERNS.some(p => p.test(text))
+      if (!isNoise) return text
+
+      // 截掉所有 --- 分隔符后的噪声段落
+      const parts = text.split(AI_NOISE_SEPARATOR)
+      // 只保留不含噪声模式的有效段落
+      const cleanParts = parts.map(p => p.trim()).filter(p => {
+        if (!p || p.length < 20) return false
+        // 过滤掉搜索建议段落（以 "> " 引用块为主）
+        if ((p.match(/>\s*"/g) || []).length >= 2) return false
+        if (/^💡\s*下一步/.test(p)) return false
+        if (/把.*检索结果.*丢给/.test(p)) return false
+        if (/重新帮你找/.test(p)) return false
+        if (/试试.*关键词/.test(p)) return false
+        return true
+      })
+
+      if (cleanParts.length === 0) {
+        return '😅 抱歉，当前数据库中没有找到与您需求匹配的餐饮商家，请尝试更换关键词。'
+      }
+      return cleanParts.join('\n\n')
+    }
+
     /* ─── 发送消息（翻译 → RAG → LLM） ─── */
     async function sendMessage(text) {
       if (!text.trim() || isThinking.value) return
@@ -524,10 +571,17 @@ export default {
           })
         }
 
+        // 用户画像类查询 → 不展示推荐商家卡片
+        const isPortrait = isPortraitQuery(rawText)
+        const filteredRecs = isPortrait
+          ? []
+          : filterRecommendations(rawRecs.map(mapRecommendation), rawText)
+        const cleanedIntro = cleanAiIntro(data.text)
+
         messages.value.push({
           role: 'ai',
-          intro: data.text,
-          recs: filterRecommendations(rawRecs.map(mapRecommendation), rawText),
+          intro: cleanedIntro,
+          recs: filteredRecs,
           fallback: data.is_fallback,
           time: timeStr(),
         })
