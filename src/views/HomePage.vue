@@ -520,6 +520,58 @@ export default {
       return cleanParts.join('\n\n')
     }
 
+    /**
+     * 从 AI 回复中提取用户画像表格部分。
+     * 匹配 ## 用户画像总结 标题及其后的 markdown 表格，
+     * 丢弃搜索抱怨、建议引导等无关内容。
+     */
+    function extractPortraitSection(text) {
+      if (!text) return text
+
+      // 匹配 ## 标题 + 表格块（含可能的前导 emoji）
+      const headingMatch = text.match(/##\s*(?:📋\s*)?你的?用户画像[总结]?[\s\S]*?(\|[\s\S]+?\|[\s\S]*?(?=\n\n---|\n---|$))/)
+      if (headingMatch) {
+        // 提取标题行和表格
+        const fullMatch = headingMatch[0]
+        // 截取到表格结束（表格以空行或 --- 结束）
+        const tableEnd = fullMatch.search(/\n\n---|\n---\n|$/)
+        const section = tableEnd > 0 ? fullMatch.slice(0, tableEnd) : fullMatch
+        const trimmed = section.trim()
+        if (trimmed) return trimmed
+      }
+
+      // 降级：用 --- 分割后找包含表格和画像关键词的段落
+      const parts = text.split(AI_NOISE_SEPARATOR)
+      for (const part of parts) {
+        const p = part.trim()
+        if (/\|.*\|/.test(p) && /画像|偏好|菜系|地区|场景/.test(p)) {
+          // 只保留标题 + 表格部分
+          const lines = p.split('\n')
+          const filtered = []
+          let inTable = false
+          for (const line of lines) {
+            const tl = line.trim()
+            // 标题行
+            if (/^##\s*/.test(tl) && /画像/.test(tl)) {
+              filtered.push(tl)
+              continue
+            }
+            // 表格行
+            if (/^\|/.test(tl)) {
+              inTable = true
+              filtered.push(tl)
+              continue
+            }
+            // 表格结束
+            if (inTable && !/^\|/.test(tl) && tl !== '') break
+          }
+          if (filtered.length) return filtered.join('\n')
+        }
+      }
+
+      return text
+    }
+
     /* ─── 发送消息（翻译 → RAG → LLM） ─── */
     async function sendMessage(text) {
       if (!text.trim() || isThinking.value) return
@@ -571,12 +623,14 @@ export default {
           })
         }
 
-        // 用户画像类查询 → 不展示推荐商家卡片
+        // 用户画像类查询 → 不展示推荐商家卡片，只提取画像表格
         const isPortrait = isPortraitQuery(rawText)
         const filteredRecs = isPortrait
           ? []
           : filterRecommendations(rawRecs.map(mapRecommendation), rawText)
-        const cleanedIntro = cleanAiIntro(data.text)
+        const cleanedIntro = isPortrait
+          ? extractPortraitSection(data.text)
+          : cleanAiIntro(data.text)
 
         messages.value.push({
           role: 'ai',
