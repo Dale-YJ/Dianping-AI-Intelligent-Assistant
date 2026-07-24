@@ -488,12 +488,15 @@ export default {
       /没法.*推荐/,
       /不能编造/,
       /翻遍了.*数据/,
-      /全是.*(?:国外|美国|摄影|美发|汽车|维修|搬家|网络)/,
+      /全是.*(?:国外|美国|摄影|美发|汽车|维修|搬家|网络|占星|干洗|高尔夫)/,
       /连一家.*都没有/,
+      /没有一家是/,
       /使不上劲/,
       /使不上劲儿/,
       /数据不给力/,
       /抱歉抱歉/,
+      /暂时没法/,
+      /目前检索/,
     ]
 
     function cleanAiIntro(text) {
@@ -522,55 +525,44 @@ export default {
     }
 
     /**
-     * 从 AI 回复中提取用户画像表格部分。
-     * 匹配 ## 用户画像总结 标题及其后的 markdown 表格，
-     * 丢弃搜索抱怨、建议引导等无关内容。
+     * 从 AI 回复中提取用户画像部分。
+     * 支持「总结」「摘要」变体，支持表格和列表两种格式。
+     * 丢弃前后的搜索抱怨、建议引导等无关内容。
      */
     function extractPortraitSection(text) {
       if (!text) return text
 
-      // 匹配 ## 标题 + 表格块（含可能的前导 emoji）
-      const headingMatch = text.match(/##\s*(?:📋\s*)?你的?用户画像[总结]?[\s\S]*?(\|[\s\S]+?\|[\s\S]*?(?=\n\n---|\n---|$))/)
-      if (headingMatch) {
-        // 提取标题行和表格
-        const fullMatch = headingMatch[0]
-        // 截取到表格结束（表格以空行或 --- 结束）
-        const tableEnd = fullMatch.search(/\n\n---|\n---\n|$/)
-        const section = tableEnd > 0 ? fullMatch.slice(0, tableEnd) : fullMatch
-        const trimmed = section.trim()
-        if (trimmed) return trimmed
+      // 找到 ## 用户画像 标题的位置
+      const headingRe = /##\s*(?:📋\s*)?你的?用户画像[总结摘要]?/
+      const headingMatch = text.match(headingRe)
+      if (!headingMatch) return text
+
+      const startIdx = headingMatch.index
+      // 从标题开始截取到下一个 --- 或末尾
+      let remaining = text.slice(startIdx)
+      const sepIdx = remaining.search(/\n---\n|\n\n---\n/)
+      if (sepIdx > 0) {
+        remaining = remaining.slice(0, sepIdx)
       }
 
-      // 降级：用 --- 分割后找包含表格和画像关键词的段落
-      const parts = text.split(AI_NOISE_SEPARATOR)
-      for (const part of parts) {
-        const p = part.trim()
-        if (/\|.*\|/.test(p) && /画像|偏好|菜系|地区|场景/.test(p)) {
-          // 只保留标题 + 表格部分
-          const lines = p.split('\n')
-          const filtered = []
-          let inTable = false
-          for (const line of lines) {
-            const tl = line.trim()
-            // 标题行
-            if (/^##\s*/.test(tl) && /画像/.test(tl)) {
-              filtered.push(tl)
-              continue
-            }
-            // 表格行
-            if (/^\|/.test(tl)) {
-              inTable = true
-              filtered.push(tl)
-              continue
-            }
-            // 表格结束
-            if (inTable && !/^\|/.test(tl) && tl !== '') break
-          }
-          if (filtered.length) return filtered.join('\n')
+      // 去掉末尾的噪声段落（提及非餐饮类目、搜索建议、引导话术）
+      const lines = remaining.split('\n')
+      const result = []
+      for (const line of lines) {
+        const tl = line.trim()
+        // 遇到噪声行及之后的内容全部丢弃
+        if (/美发|占星|干洗|高尔夫|摄影|搬家|汽车维修|网络公司|没有一家|没法.*推荐|不能编造|暂时没法|目前检索/.test(tl)) {
+          break
         }
+        // 引导话术
+        if (/能不能补充|告诉我.*帮你|帮你.*搜索|帮你.*找|重新.*搜索/.test(tl)) {
+          break
+        }
+        result.push(line)
       }
 
-      return text
+      const extracted = result.join('\n').trim()
+      return extracted || text
     }
 
     /* ─── 发送消息（翻译 → RAG → LLM） ─── */
