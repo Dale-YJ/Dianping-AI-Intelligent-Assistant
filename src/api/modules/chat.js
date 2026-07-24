@@ -213,11 +213,21 @@ export async function postChatSend(message, conversationId, city, businessId) {
     if (city) body.city = city
     if (businessId) body.business_id = businessId
 
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    // 设置超时（AI 对话最长等待 45 秒）
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 45_000)
+
+    let resp
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
 
     if (!resp.ok) {
       throw new Error(`AI 服务返回错误 (HTTP ${resp.status})`)
@@ -259,12 +269,17 @@ export async function postChatSend(message, conversationId, city, businessId) {
       is_fallback: isFallback,
     }
   } catch (err) {
-    history.push({ role: 'assistant', content: `[错误] ${err.message}` })
+    // 区分超时和其他错误
+    const errMsg = err.name === 'AbortError'
+      ? '⏳ AI 响应超时，请稍后重试或尝试简化问题。'
+      : (err.message || '抱歉，发生了未知错误，请稍后再试')
+
+    history.push({ role: 'assistant', content: `[错误] ${errMsg}` })
     saveHistory(convId, history)
 
     return {
       conversation_id: convId,
-      text: '',
+      text: errMsg,
       recommendations: [],
       is_fallback: true,
     }
